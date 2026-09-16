@@ -517,6 +517,53 @@ function saveAccounts(accounts) {
   localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
 }
 
+function exportAccountsBackup() {
+  return JSON.stringify(loadAccounts());
+}
+
+function importAccountsBackup(raw) {
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ok: false, message: "That save code is not valid." };
+  }
+
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    return { ok: false, message: "That save code is empty or invalid." };
+  }
+
+  for (const entry of parsed) {
+    if (!entry || typeof entry.username !== "string" || typeof entry.password !== "string") {
+      return { ok: false, message: "That save code is missing account data." };
+    }
+  }
+
+  const merged = loadAccounts().slice();
+  for (const entry of parsed) {
+    const normalized = entry.username.toLowerCase();
+    const index = merged.findIndex((account) => account.username.toLowerCase() === normalized);
+    if (index === -1) {
+      merged.push(entry);
+    } else {
+      merged[index] = entry;
+    }
+  }
+
+  saveAccounts(merged);
+  return { ok: true, message: `Imported ${parsed.length} account(s). Sign in with your username and password.` };
+}
+
+async function copyAccountsBackupToClipboard() {
+  const payload = exportAccountsBackup();
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(payload);
+    return;
+  }
+
+  window.prompt("Copy this save code:", payload);
+}
+
 function findAccount(username, password) {
   const normalizedUsername = username.toLowerCase();
   return loadAccounts().find(
@@ -890,6 +937,10 @@ function renderSignIn() {
         </button>
         <div class="auth-divider"><span>New to the realm?</span></div>
         <button class="auth-button ghost" type="button" data-action="show-create-account">Create Account</button>
+        <div class="auth-divider"><span>Switch device or site</span></div>
+        <p class="auth-save-hint">Accounts live in this browser only. localhost and Render do not share saves unless you copy them over.</p>
+        <button class="auth-button ghost" type="button" data-action="export-accounts">Export Save</button>
+        <button class="auth-button ghost" type="button" data-action="import-accounts">Import Save</button>
       </form>
     </div>
   `);
@@ -6487,6 +6538,32 @@ app.addEventListener("click", (event) => {
     state.screen = "create-account";
     state.error = "";
     state.success = "";
+    render();
+    return;
+  }
+
+  if (actionTarget.dataset.action === "export-accounts") {
+    copyAccountsBackupToClipboard()
+      .then(() => {
+        state.error = "";
+        state.success = "Save copied. Paste it with Import Save on Render (or another browser).";
+        render();
+      })
+      .catch(() => {
+        state.success = "";
+        state.error = "Could not copy the save. Try again or use the popup to copy manually.";
+        render();
+      });
+    return;
+  }
+
+  if (actionTarget.dataset.action === "import-accounts") {
+    const raw = window.prompt("Paste your exported save code:");
+    if (raw === null) return;
+
+    const result = importAccountsBackup(raw.trim());
+    state.success = result.ok ? result.message : "";
+    state.error = result.ok ? "" : result.message;
     render();
     return;
   }

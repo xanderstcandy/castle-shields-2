@@ -687,6 +687,16 @@ body:has(.camp-screen) {
   text-wrap: balance;
 }
 
+.auth-save-hint {
+  max-width: 36ch;
+  margin: 0 auto 12px;
+  color: #94a3b8;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  text-align: center;
+  text-wrap: balance;
+}
+
 .auth-form {
   display: grid;
   gap: 15px;
