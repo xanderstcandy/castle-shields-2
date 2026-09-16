@@ -1,5 +1,5 @@
 const app = document.querySelector("#app");
-const ACCOUNTS_KEY = "castleShields2Accounts";
+const AUTO_SAVE_INTERVAL_MS = 10000;
 
 const TENT_LEVELS = [
   { label: "Canvas Tent", kicker: "Main Tent", maxHealth: 3, defense: 0, population: 1, retaliation: 0, upgradeCost: 60 },
@@ -456,6 +456,7 @@ function createDefaultCrossbow() {
 const state = {
   screen: "loading",
   username: "",
+  password: "",
   coins: STARTING_COINS,
   gems: 0,
   tentLevel: 1,
@@ -499,81 +500,44 @@ const combat = {
 
 let combatLayer = null;
 let combatLoopId = 0;
+let autoSaveTimer = 0;
 
 function template(content, className = "center") {
   app.innerHTML = `<section class="screen ${className}">${content}</section>`;
 }
 
-function loadAccounts() {
+async function postAccountRequest(endpoint, payload) {
+  let response;
   try {
-    const saved = localStorage.getItem(ACCOUNTS_KEY);
-    return saved ? JSON.parse(saved) : [];
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
   } catch {
-    return [];
+    throw new Error("Could not reach the castle server. Check your connection and try again.");
   }
-}
 
-function saveAccounts(accounts) {
-  localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
-}
-
-function exportAccountsBackup() {
-  return JSON.stringify(loadAccounts());
-}
-
-function importAccountsBackup(raw) {
-  let parsed;
+  let data = null;
   try {
-    parsed = JSON.parse(raw);
+    data = await response.json();
   } catch {
-    return { ok: false, message: "That save code is not valid." };
+    data = null;
   }
 
-  if (!Array.isArray(parsed) || parsed.length === 0) {
-    return { ok: false, message: "That save code is empty or invalid." };
+  if (!response.ok) {
+    throw new Error(data?.error || "The castle server could not handle that. Try again.");
   }
 
-  for (const entry of parsed) {
-    if (!entry || typeof entry.username !== "string" || typeof entry.password !== "string") {
-      return { ok: false, message: "That save code is missing account data." };
-    }
-  }
-
-  const merged = loadAccounts().slice();
-  for (const entry of parsed) {
-    const normalized = entry.username.toLowerCase();
-    const index = merged.findIndex((account) => account.username.toLowerCase() === normalized);
-    if (index === -1) {
-      merged.push(entry);
-    } else {
-      merged[index] = entry;
-    }
-  }
-
-  saveAccounts(merged);
-  return { ok: true, message: `Imported ${parsed.length} account(s). Sign in with your username and password.` };
+  return data;
 }
 
-async function copyAccountsBackupToClipboard() {
-  const payload = exportAccountsBackup();
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(payload);
-    return;
-  }
-
-  window.prompt("Copy this save code:", payload);
+function createAccountRequest(username, password) {
+  return postAccountRequest("/api/create-account", { username, password });
 }
 
-function findAccount(username, password) {
-  const normalizedUsername = username.toLowerCase();
-  return loadAccounts().find(
-    (account) => account.username.toLowerCase() === normalizedUsername && account.password === password
-  );
-}
-
-function findAccountByUsername(username) {
-  const normalizedUsername = username.toLowerCase();
-  return loadAccounts().find((account) => account.username.toLowerCase() === normalizedUsername);
+function signInRequest(username, password) {
+  return postAccountRequest("/api/sign-in", { username, password });
 }
 
 function getCombatClock(now = performance.now()) {
@@ -685,33 +649,42 @@ function applyGameSave(save) {
   return true;
 }
 
-function saveAccountProgress(username) {
-  if (!username) return;
+function saveAccountProgress() {
+  if (!state.username || !state.password || state.screen !== "camp") return Promise.resolve();
 
-  const accounts = loadAccounts();
-  const normalizedUsername = username.toLowerCase();
-  const index = accounts.findIndex((account) => account.username.toLowerCase() === normalizedUsername);
-  if (index === -1) return;
-
-  accounts[index] = {
-    ...accounts[index],
+  return postAccountRequest("/api/save", {
+    username: state.username,
+    password: state.password,
     save: serializeGameSave()
-  };
-  saveAccounts(accounts);
+  }).catch(() => {});
 }
 
-function loadAccountSave(username) {
-  const account = findAccountByUsername(username);
-  return account?.save ?? null;
+function flushAccountProgress() {
+  if (!state.username || !state.password || state.screen !== "camp") return;
+
+  const payload = JSON.stringify({
+    username: state.username,
+    password: state.password,
+    save: serializeGameSave()
+  });
+
+  if (navigator.sendBeacon) {
+    navigator.sendBeacon("/api/save", new Blob([payload], { type: "application/json" }));
+    return;
+  }
+
+  saveAccountProgress();
 }
 
-function usernameTaken(username) {
-  const normalizedUsername = username.toLowerCase();
-  return loadAccounts().some((account) => account.username.toLowerCase() === normalizedUsername);
+function startAutoSave() {
+  stopAutoSave();
+  autoSaveTimer = setInterval(saveAccountProgress, AUTO_SAVE_INTERVAL_MS);
 }
 
-function passwordTaken(password) {
-  return loadAccounts().some((account) => account.password === password);
+function stopAutoSave() {
+  if (!autoSaveTimer) return;
+  clearInterval(autoSaveTimer);
+  autoSaveTimer = 0;
 }
 
 function statusLine() {
@@ -937,10 +910,7 @@ function renderSignIn() {
         </button>
         <div class="auth-divider"><span>New to the realm?</span></div>
         <button class="auth-button ghost" type="button" data-action="show-create-account">Create Account</button>
-        <div class="auth-divider"><span>Switch device or site</span></div>
-        <p class="auth-save-hint">Accounts live in this browser only. localhost and Render do not share saves unless you copy them over.</p>
-        <button class="auth-button ghost" type="button" data-action="export-accounts">Export Save</button>
-        <button class="auth-button ghost" type="button" data-action="import-accounts">Import Save</button>
+        <p class="auth-save-hint">Your castle is saved on the server, so it follows you to any browser or device.</p>
       </form>
     </div>
   `);
@@ -4436,18 +4406,22 @@ function renderGemShopPanel() {
 
   const canTrade = state.gems >= GEM_SHOP_DIAMOND_COST;
 
+  const coinIcon = `<img class="gem-shop-inline-icon" src="coin.png" alt="" width="18" height="18" aria-hidden="true">`;
+
   return `
-    <div class="gem-shop-panel" role="dialog" aria-label="Diamond shop">
-      <p class="gem-shop-kicker">Diamond Shop</p>
+    <div class="gem-shop-panel" role="dialog" aria-label="Shop">
+      <p class="gem-shop-kicker">Shop</p>
       <p class="gem-shop-offer">
-        Trade ${GEM_SHOP_DIAMOND_COST} diamonds for ${GEM_SHOP_COIN_REWARD} gold
+        Trade ${GEM_SHOP_DIAMOND_COST} diamonds for
+        <span class="gem-shop-coin-reward">${coinIcon}${GEM_SHOP_COIN_REWARD}</span>
+        coin
       </p>
       <button
         class="gem-shop-trade-button auth-button${canTrade ? "" : " is-broke"}"
         type="button"
         data-action="trade-gems-for-coins"
         ${canTrade ? "" : "disabled"}
-        aria-label="Trade ${GEM_SHOP_DIAMOND_COST} diamonds for ${GEM_SHOP_COIN_REWARD} gold"
+        aria-label="Trade ${GEM_SHOP_DIAMOND_COST} diamonds for ${GEM_SHOP_COIN_REWARD} coin"
       >
         Trade
       </button>
@@ -6463,12 +6437,12 @@ function renderCamp() {
             data-action="toggle-gem-shop"
             aria-expanded="${state.gemShopOpen}"
             aria-haspopup="dialog"
-            aria-label="Open diamond shop"
+            aria-label="Open shop"
           >
-            <span class="gem-shop-button-icon-wrap">
-              <img class="gem-shop-button-icon" src="gem.png" alt="" width="20" height="20">
+            <span class="gem-shop-button-icon-wrap gem-shop-button-icon-wrap-coin">
+              <img class="gem-shop-button-icon" src="coin.png" alt="" width="20" height="20">
             </span>
-            Diamond Shop
+            Shop
           </button>
           ${renderGemShopPanel()}
         </div>
@@ -6481,9 +6455,10 @@ function renderCamp() {
   syncCombatLayer();
 }
 
-function enterCastle(username) {
+function enterCastle(username, password, savedGame) {
   stopCombatLoop();
   state.username = username;
+  state.password = password;
   state.screen = "camp";
   state.error = "";
   state.success = "";
@@ -6493,7 +6468,6 @@ function enterCastle(username) {
   state.gemShopOpen = false;
   state.buildPanelSlot = null;
 
-  const savedGame = loadAccountSave(username);
   if (savedGame) {
     applyGameSave(savedGame);
   } else {
@@ -6512,6 +6486,7 @@ function enterCastle(username) {
 
   render();
   startCombatLoop(Boolean(savedGame));
+  startAutoSave();
 }
 
 function render() {
@@ -6538,32 +6513,6 @@ app.addEventListener("click", (event) => {
     state.screen = "create-account";
     state.error = "";
     state.success = "";
-    render();
-    return;
-  }
-
-  if (actionTarget.dataset.action === "export-accounts") {
-    copyAccountsBackupToClipboard()
-      .then(() => {
-        state.error = "";
-        state.success = "Save copied. Paste it with Import Save on Render (or another browser).";
-        render();
-      })
-      .catch(() => {
-        state.success = "";
-        state.error = "Could not copy the save. Try again or use the popup to copy manually.";
-        render();
-      });
-    return;
-  }
-
-  if (actionTarget.dataset.action === "import-accounts") {
-    const raw = window.prompt("Paste your exported save code:");
-    if (raw === null) return;
-
-    const result = importAccountsBackup(raw.trim());
-    state.success = result.ok ? result.message : "";
-    state.error = result.ok ? "" : result.message;
     render();
     return;
   }
@@ -6734,12 +6683,12 @@ app.addEventListener("click", (event) => {
   }
 
   if (actionTarget.dataset.action === "show-sign-in") {
-    if (state.screen === "camp" && state.username) {
-      saveAccountProgress(state.username);
-    }
+    saveAccountProgress();
+    stopAutoSave();
     stopCombatLoop();
     state.screen = "sign-in";
     state.username = "";
+    state.password = "";
     state.tentUpgradeOpen = false;
     state.crossbowPanelOpen = false;
     state.wallPanelOpen = false;
@@ -6761,7 +6710,7 @@ window.addEventListener("resize", () => {
   positionBuildHitButtons();
 });
 
-app.addEventListener("submit", (event) => {
+app.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.target;
   const data = new FormData(form);
@@ -6777,40 +6726,26 @@ app.addEventListener("submit", (event) => {
     return;
   }
 
-  if (form.dataset.form === "create-account") {
-    if (findAccount(username, password)) {
-      enterCastle(username);
-      return;
-    }
+  const submitButton = form.querySelector("button[type='submit']");
+  if (submitButton) submitButton.disabled = true;
 
-    if (usernameTaken(username)) {
-      state.error = "That username is already taken. Sign in with the password you created for it.";
-      render();
-      return;
-    }
+  try {
+    const account = form.dataset.form === "create-account"
+      ? await createAccountRequest(username, password)
+      : await signInRequest(username, password);
 
-    if (passwordTaken(password)) {
-      state.error = "That password is already used by another account. Pick a different one.";
-      render();
-      return;
-    }
-
-    const accounts = loadAccounts();
-    accounts.push({ username, password });
-    saveAccounts(accounts);
-    enterCastle(username);
-    return;
+    enterCastle(account.username, password, account.save);
+  } catch (error) {
+    if (submitButton) submitButton.disabled = false;
+    state.error = error.message;
+    render();
   }
+});
 
-  if (form.dataset.form === "sign-in") {
-    if (!findAccount(username, password)) {
-      state.error = "No account matches that username and password together.";
-      render();
-      return;
-    }
+window.addEventListener("pagehide", flushAccountProgress);
 
-    enterCastle(username);
-  }
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") flushAccountProgress();
 });
 
 render();

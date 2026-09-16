@@ -1506,6 +1506,12 @@ body:has(.camp-screen) {
   background: radial-gradient(circle at 35% 28%, rgba(216, 180, 254, 0.42), rgba(76, 29, 149, 0.5) 72%);
 }
 
+.gem-shop-button-icon-wrap-coin {
+  transform: none;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 28%, rgba(253, 224, 71, 0.35), rgba(120, 53, 15, 0.42) 72%);
+}
+
 .gem-shop-button-icon {
   display: block;
   width: 16px;
@@ -1513,6 +1519,10 @@ body:has(.camp-screen) {
   transform: rotate(-45deg);
   object-fit: contain;
   mix-blend-mode: multiply;
+}
+
+.gem-shop-button-icon-wrap-coin .gem-shop-button-icon {
+  transform: none;
 }
 
 .gem-shop-panel {
@@ -1545,6 +1555,21 @@ body:has(.camp-screen) {
   font-size: 0.95rem;
   font-weight: 700;
   line-height: 1.35;
+}
+
+.gem-shop-coin-reward {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  vertical-align: baseline;
+}
+
+.gem-shop-inline-icon {
+  display: block;
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  mix-blend-mode: multiply;
 }
 
 .gem-shop-trade-button {
