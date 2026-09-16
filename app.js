@@ -148,6 +148,7 @@ const BOSS_WAVE_INTERVAL = 15;
 const BOSS_WAVE_ATTACK_MS = 120000;
 const BOSS_ORDER = ["warlord", "bone_tyrant", "elder_wyrm"];
 const LATE_GAME_WAVE = 30;
+const EARLY_GAME_EASE_MAX_WAVE = 14;
 
 const ENEMY_DEF = {
   plague_rat: {
@@ -3257,18 +3258,38 @@ function getLateGameSteps(waveNumber = combat.waveNumber) {
   return Math.max(0, waveNumber - LATE_GAME_WAVE);
 }
 
+function getEarlyGameEase(waveNumber = combat.waveNumber) {
+  if (waveNumber < 1 || waveNumber > EARLY_GAME_EASE_MAX_WAVE) return 0;
+  return (EARLY_GAME_EASE_MAX_WAVE - waveNumber) / (EARLY_GAME_EASE_MAX_WAVE - 1);
+}
+
+function getEarlyGameEnemyScale(waveNumber = combat.waveNumber) {
+  const ease = getEarlyGameEase(waveNumber);
+  return {
+    health: 1 - ease * 0.22,
+    damage: 1 - ease * 0.15,
+    speed: 1 - ease * 0.1
+  };
+}
+
 function getWavePeaceMs(waveNumber = combat.waveNumber) {
   const steps = getLateGameSteps(waveNumber);
-  if (steps <= 0) return WAVE_PEACE_MS;
+  const ease = getEarlyGameEase(waveNumber);
+  if (steps <= 0) {
+    return WAVE_PEACE_MS + Math.round(ease * 3500);
+  }
   return Math.max(2200, WAVE_PEACE_MS - steps * 140);
 }
 
 function getWaveAttackMs(waveNumber = combat.waveNumber) {
   const steps = getLateGameSteps(waveNumber);
+  const ease = getEarlyGameEase(waveNumber);
   if (isBossWave(waveNumber)) {
-    return BOSS_WAVE_ATTACK_MS + steps * 2500;
+    return BOSS_WAVE_ATTACK_MS + steps * 2500 - Math.round(ease * 15000);
   }
-  if (steps <= 0) return WAVE_ATTACK_MS;
+  if (steps <= 0) {
+    return WAVE_ATTACK_MS - Math.round(ease * 14000);
+  }
   return WAVE_ATTACK_MS + Math.min(steps * 650, 90000);
 }
 
@@ -3297,11 +3318,19 @@ function startWaveCycle(now) {
 }
 
 function getSpawnIntervalMs() {
-  if (combat.waveNumber === 1) return 7000;
-  if (combat.waveNumber === 2) return 5200;
-  const steps = getLateGameSteps();
-  if (steps <= 0) return SPAWN_INTERVAL_MS;
-  return Math.max(900, SPAWN_INTERVAL_MS - steps * 110);
+  let interval;
+  if (combat.waveNumber === 1) interval = 7500;
+  else if (combat.waveNumber === 2) interval = 5600;
+  else {
+    const steps = getLateGameSteps();
+    interval = steps <= 0 ? SPAWN_INTERVAL_MS : Math.max(900, SPAWN_INTERVAL_MS - steps * 110);
+  }
+
+  const ease = getEarlyGameEase();
+  if (ease > 0) {
+    interval = Math.round(interval * (1 + ease * 0.38));
+  }
+  return interval;
 }
 
 function isBossWave(waveNumber = combat.waveNumber) {
@@ -3324,7 +3353,8 @@ function spawnBoss() {
   const lane = SPAWN_LANES[laneIndex];
   const start = lane[0];
   const lateScale = getWaveEnemyScale();
-  const health = Math.round(def.health * (1 + (tier - 1) * 0.85) * lateScale.health);
+  const earlyScale = getEarlyGameEnemyScale();
+  const health = Math.round(def.health * (1 + (tier - 1) * 0.85) * lateScale.health * earlyScale.health);
 
   combat.enemies.push({
     id: combat.nextEnemyId++,
@@ -3333,8 +3363,8 @@ function spawnBoss() {
     waypointIndex: 1,
     health,
     maxHealth: health,
-    damage: Math.max(1, Math.round(def.damage * lateScale.damage)),
-    speed: def.speed * (1 + (tier - 1) * 0.05) * lateScale.speed,
+    damage: Math.max(1, Math.round(def.damage * lateScale.damage * earlyScale.damage)),
+    speed: def.speed * (1 + (tier - 1) * 0.05) * lateScale.speed * earlyScale.speed,
     facing: lane[1].x >= start.x ? 1 : -1,
     lastAttackAt: 0,
     isBoss: true,
@@ -3411,7 +3441,11 @@ function getEnemyWeight(def, waveNumber) {
 }
 
 function pickEnemyType(waveNumber) {
-  const rosterWave = waveNumber + ENEMY_ROSTER_WAVE_BONUS + Math.floor(getLateGameSteps(waveNumber) / 2);
+  if (waveNumber === 1) return "goblin";
+
+  const ease = getEarlyGameEase(waveNumber);
+  const rosterWave =
+    waveNumber + ENEMY_ROSTER_WAVE_BONUS + Math.floor(getLateGameSteps(waveNumber) / 2) - Math.round(ease * 1.5);
   const available = Object.entries(ENEMY_DEF)
     .filter(([, def]) => rosterWave >= def.minWave)
     .map(([type, def]) => [type, getEnemyWeight(def, rosterWave)]);
@@ -3434,8 +3468,9 @@ function spawnEnemy() {
   const type = pickEnemyType(combat.waveNumber);
   const def = ENEMY_DEF[type];
   const scale = getWaveEnemyScale();
+  const early = getEarlyGameEnemyScale();
 
-  const health = Math.max(1, Math.round(def.health * scale.health));
+  const health = Math.max(1, Math.round(def.health * scale.health * early.health));
   combat.enemies.push({
     id: combat.nextEnemyId++,
     type,
@@ -3443,8 +3478,8 @@ function spawnEnemy() {
     waypointIndex: 1,
     health,
     maxHealth: health,
-    damage: Math.max(1, Math.round(def.damage * scale.damage)),
-    speed: def.speed * scale.speed,
+    damage: Math.max(1, Math.round(def.damage * scale.damage * early.damage)),
+    speed: def.speed * scale.speed * early.speed,
     facing: lane[1].x >= start.x ? 1 : -1,
     lastAttackAt: 0,
     coinReward: def.coins,
