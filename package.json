@@ -1,0 +1,12 @@
+{
+  "name": "castle-shields-2",
+  "description": "Castle Shields 2 — browser strategy game",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check app.js && node --check server.js"
+  }
+}
