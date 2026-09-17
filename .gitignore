@@ -1,3 +1,5 @@
 node_modules/
 tmp-*.png
 accounts.json
+.neon
+.env.local
