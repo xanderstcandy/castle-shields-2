@@ -11,7 +11,8 @@ const TENT_LEVELS = [
   { label: "Twin Tower Keep", kicker: "Twin Tower Keep", maxHealth: 35, defense: 5, population: 10, retaliation: 5, upgradeCost: 250 },
   { label: "Four Tower Keep", kicker: "Four Tower Keep", maxHealth: 50, defense: 10, population: 14, retaliation: 5, upgradeCost: 300 },
   { label: "Four Tower Keep", kicker: "Four Tower Keep", maxHealth: 75, defense: 25, population: 16, retaliation: 8, upgradeCost: 300 },
-  { label: "Ancient Stone Keep", kicker: "Ancient Stone Keep", maxHealth: 100, defense: 50, population: 16, retaliation: 10, upgradeCost: 0 }
+  { label: "Ancient Stone Keep", kicker: "Ancient Stone Keep", maxHealth: 100, defense: 50, population: 16, retaliation: 10, upgradeCost: 500 },
+  { label: "Grand Citadel", kicker: "Grand Citadel", maxHealth: 300, defense: 150, population: 20, retaliation: 50, upgradeCost: 0 }
 ];
 const TENT_MAX_LEVEL = TENT_LEVELS.length;
 
@@ -53,7 +54,10 @@ const BUILD_SLOTS = [
   { x: 496, y: 916, tentLevel: 6 },
   { x: 952, y: 912, tentLevel: 7 },
   { x: 718, y: 924, tentLevel: 8 },
-  { x: 1246, y: 762, tentLevel: 9 }
+  { x: 1246, y: 762, tentLevel: 9 },
+  { x: 400, y: 742, tentLevel: 10 },
+  { x: 620, y: 700, tentLevel: 10 },
+  { x: 1010, y: 758, tentLevel: 10 }
 ];
 const BUILDINGS = [
   { id: "barracks", label: "Barracks", cost: 60, blurb: "Drill yard" },
@@ -2368,6 +2372,97 @@ function fourTowerKeep() {
   `;
 }
 
+function spiredWatchtower(x, y, bannerClass) {
+  return `
+    <g class="watchtower citadel-tower" transform="translate(${x} ${y})">
+      <ellipse class="prop-shadow" cx="8" cy="5" rx="50" ry="16"/>
+      <path class="tower-body" d="M -30 0 L -23 -126 H 23 L 30 0 Z"/>
+      <path class="citadel-trim" d="M -27 -48 H 27 M -25 -88 H 25"/>
+      <rect class="tower-door" x="-10" y="-32" width="20" height="32" rx="4"/>
+      <path class="citadel-arch-trim" d="M -12 -32 a 12 12 0 0 1 24 0"/>
+      <rect class="tower-window" x="-6" y="-74" width="12" height="16" rx="6"/>
+      <rect class="tower-window" x="-6" y="-110" width="12" height="14" rx="6"/>
+      <rect class="tower-crown" x="-36" y="-148" width="72" height="22" rx="4"/>
+      <path class="citadel-trim" d="M -36 -142 H 36"/>
+      ${merlonRow(-36, 36, -148, 11, 8, 14)}
+      <polygon class="citadel-roof" points="-40,-162 0,-232 40,-162"/>
+      <polygon class="citadel-roof-shade" points="0,-232 40,-162 16,-162"/>
+      <path class="citadel-roof-trim" d="M -40 -162 H 40 M -28 -184 H 28 M -16 -206 H 16"/>
+      <rect class="citadel-finial-pole" x="-2" y="-258" width="4" height="30" rx="2"/>
+      <circle class="citadel-finial" cx="0" cy="-260" r="6"/>
+      <rect class="banner-pole" x="32" y="-150" width="4" height="54" rx="2"/>
+      <g class="banner-cloth-wrap">
+        <path class="banner-cloth ${bannerClass}" d="M 36 -146 h 26 v 36 l -13 -8 l -13 8 Z"/>
+      </g>
+    </g>
+  `;
+}
+
+function citadelOrnaments() {
+  const cornerTurret = (x) => `
+    <g transform="translate(${x} -246)">
+      <rect class="citadel-turret" x="-17" y="-58" width="34" height="60" rx="4"/>
+      <path class="citadel-trim" d="M -17 -22 h 34"/>
+      <rect class="tower-window" x="-5" y="-44" width="10" height="14" rx="5"/>
+      <polygon class="citadel-roof" points="-24,-58 0,-108 24,-58"/>
+      <polygon class="citadel-roof-shade" points="0,-108 24,-58 9,-58"/>
+      <rect class="citadel-finial-pole" x="-2" y="-130" width="4" height="26" rx="2"/>
+      <circle class="citadel-finial" cx="0" cy="-132" r="5"/>
+    </g>
+  `;
+
+  const brazier = (x) => `
+    <g transform="translate(${x} -2)">
+      <ellipse class="prop-shadow" cx="2" cy="3" rx="13" ry="5"/>
+      <rect class="citadel-brazier-post" x="-4" y="-34" width="8" height="34" rx="3"/>
+      <path class="citadel-brazier-bowl" d="M -13 -40 h 26 l -5 12 h -16 Z"/>
+      <path class="flame flame-outer" d="M 0 -42 c 9 -7 10 -16 4 -25 c 9 5 13 15 8 24 c -3 5 -9 6 -12 1 Z"/>
+      <path class="flame flame-core" d="M 0 -42 c 4 -6 4 -13 0 -20 c -5 7 -5 14 0 20 Z"/>
+    </g>
+  `;
+
+  const wallBanner = (x, accent) => `
+    <g transform="translate(${x} -30)">
+      <rect class="citadel-trim-block" x="-13" y="-4" width="26" height="4" rx="2"/>
+      <path class="banner-cloth ${accent}" d="M -11 0 h 22 v 30 l -11 -7 l -11 7 Z"/>
+    </g>
+  `;
+
+  return `
+    <g class="citadel-ornaments">
+      ${cornerTurret(-80)}
+      ${cornerTurret(80)}
+      <path class="citadel-trim" d="M -80 -208 h 160 M -70 -186 h 140 M -82 -22 h 164 M -70 -60 h 140"/>
+      <g transform="translate(0 -124)">
+        <path class="citadel-window-frame" d="M -21 21 v -22 a 21 21 0 0 1 42 0 v 22 Z"/>
+        <path class="citadel-glass" d="M -15 16 v -18 a 15 15 0 0 1 30 0 v 18 Z"/>
+        <path class="citadel-glass-lead" d="M 0 16 v -34 M -15 -1 h 30"/>
+      </g>
+      <path class="citadel-arch-trim" d="M -39 -17 a 39 39 0 0 1 78 0"/>
+      ${wallBanner(-112, "banner-blue")}
+      ${wallBanner(-74, "banner-gold")}
+      ${wallBanner(76, "banner-blue")}
+      ${wallBanner(114, "banner-gold")}
+      ${brazier(-50)}
+      ${brazier(50)}
+      <path class="citadel-carpet" d="M -22 10 h 44 l 10 12 h -64 Z"/>
+    </g>
+  `;
+}
+
+function grandCitadel() {
+  return `
+    <g class="grand-keep">
+      ${spiredWatchtower(-196, -56, "banner-blue")}
+      ${spiredWatchtower(232, -56, "banner-gold")}
+      ${spiredWatchtower(-230, 76, "banner-blue")}
+      ${spiredWatchtower(266, 76, "banner-gold")}
+      ${castleTower(true, false)}
+      ${citadelOrnaments()}
+    </g>
+  `;
+}
+
 function ancientStoneKeep() {
   return `
     <g class="ancient-keep">
@@ -2381,7 +2476,8 @@ function ancientStoneKeep() {
 }
 
 function renderHomeSvg() {
-  if (state.tentLevel >= 9) return ancientStoneKeep();
+  if (state.tentLevel >= 10) return grandCitadel();
+  if (state.tentLevel === 9) return ancientStoneKeep();
   if (state.tentLevel >= 7) return fourTowerKeep();
   if (state.tentLevel >= 6) return twinTowerKeep();
   if (state.tentLevel === 5) return castleTower(true);

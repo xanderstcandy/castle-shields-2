@@ -3000,6 +3000,127 @@ body:has(.camp-screen) {
   fill: rgba(88, 152, 74, 0.82);
 }
 
+.grand-keep .tower-wall-front,
+.grand-keep .bailey-wall-front {
+  fill: #c6cedb;
+}
+
+.grand-keep .tower-wall-side,
+.grand-keep .bailey-wall-side {
+  fill: #929cad;
+}
+
+.grand-keep .bailey-wall-rear {
+  fill: #aab4c3;
+}
+
+.grand-keep .bailey-stone {
+  fill: #ccd4e0;
+  stroke: #96a0b0;
+}
+
+.grand-keep .bailey-merlon,
+.grand-keep .bailey-turret-cap,
+.grand-keep .tower-merlon,
+.grand-keep .tower-parapet,
+.grand-keep .tower-corbel,
+.grand-keep .tower-crown,
+.grand-keep .citadel-turret {
+  fill: #d4dbe6;
+}
+
+.grand-keep .bailey-merlon-rear,
+.grand-keep .bailey-turret {
+  fill: #b8c1ce;
+}
+
+.grand-keep .bailey-turret-side,
+.grand-keep .tower-merlon-side,
+.grand-keep .tower-parapet-side,
+.grand-keep .tower-corbel-side {
+  fill: #8d97a7;
+}
+
+.grand-keep .tower-stone {
+  stroke: #a5aebd;
+}
+
+.grand-keep .bailey-arch {
+  fill: #5b6474;
+}
+
+.grand-keep .bailey-path,
+.grand-keep .cabin-step {
+  fill: #e0d6bd;
+}
+
+.citadel-roof {
+  fill: #7f1d3a;
+}
+
+.citadel-roof-shade {
+  fill: #5d1329;
+}
+
+.citadel-roof-trim {
+  fill: none;
+  stroke: rgba(240, 214, 140, 0.75);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+
+.citadel-trim {
+  fill: none;
+  stroke: #e9c46a;
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.citadel-trim-block {
+  fill: #e9c46a;
+}
+
+.citadel-arch-trim {
+  fill: none;
+  stroke: #e9c46a;
+  stroke-width: 4;
+  stroke-linecap: round;
+}
+
+.citadel-finial {
+  fill: #f3d382;
+}
+
+.citadel-finial-pole {
+  fill: #c7a24a;
+}
+
+.citadel-window-frame {
+  fill: #e9c46a;
+}
+
+.citadel-glass {
+  fill: #6aa9d8;
+}
+
+.citadel-glass-lead {
+  fill: none;
+  stroke: rgba(30, 58, 92, 0.65);
+  stroke-width: 2;
+}
+
+.citadel-brazier-post {
+  fill: #5b6474;
+}
+
+.citadel-brazier-bowl {
+  fill: #c7a24a;
+}
+
+.citadel-carpet {
+  fill: #9f2b3f;
+}
+
 .horse-body,
 .horse-head {
   fill: #8a5a35;
