@@ -10,7 +10,8 @@ const TENT_LEVELS = [
   { label: "Walled Tower", kicker: "Walled Tower", maxHealth: 35, defense: 3, population: 7, retaliation: 3, upgradeCost: 200 },
   { label: "Twin Tower Keep", kicker: "Twin Tower Keep", maxHealth: 35, defense: 5, population: 10, retaliation: 5, upgradeCost: 250 },
   { label: "Four Tower Keep", kicker: "Four Tower Keep", maxHealth: 50, defense: 10, population: 14, retaliation: 5, upgradeCost: 300 },
-  { label: "Four Tower Keep", kicker: "Four Tower Keep", maxHealth: 75, defense: 25, population: 16, retaliation: 8, upgradeCost: 0 }
+  { label: "Four Tower Keep", kicker: "Four Tower Keep", maxHealth: 75, defense: 25, population: 16, retaliation: 8, upgradeCost: 300 },
+  { label: "Ancient Stone Keep", kicker: "Ancient Stone Keep", maxHealth: 100, defense: 50, population: 16, retaliation: 10, upgradeCost: 0 }
 ];
 const TENT_MAX_LEVEL = TENT_LEVELS.length;
 
@@ -51,7 +52,8 @@ const BUILD_SLOTS = [
   { x: 1096, y: 884, tentLevel: 6 },
   { x: 496, y: 916, tentLevel: 6 },
   { x: 952, y: 912, tentLevel: 7 },
-  { x: 718, y: 924, tentLevel: 8 }
+  { x: 718, y: 924, tentLevel: 8 },
+  { x: 1246, y: 762, tentLevel: 9 }
 ];
 const BUILDINGS = [
   { id: "barracks", label: "Barracks", cost: 60, blurb: "Drill yard" },
@@ -1851,25 +1853,29 @@ function house() {
   `;
 }
 
-function baileyMerlons(startX, endX, baseY, cls) {
+function baileyMerlons(startX, endX, baseY, cls, ruined) {
   const blocks = [];
+  let index = 0;
   for (let x = startX; x + 20 <= endX + 1; x += 34) {
-    blocks.push(`<rect class="${cls}" x="${x}" y="${baseY - 12}" width="20" height="13" rx="2"/>`);
+    index += 1;
+    if (ruined && index % 3 === 0) continue;
+    const height = ruined && index % 4 === 0 ? 7 : 13;
+    blocks.push(`<rect class="${cls}" x="${x}" y="${baseY + 1 - height}" width="20" height="${height}" rx="2"/>`);
   }
   return blocks.join("");
 }
 
-function baileyRear() {
+function baileyRear(ruined) {
   return `
     <polygon class="bailey-wall-rear" points="-110,-74 190,-74 190,-32 -110,-32"/>
-    ${baileyMerlons(-110, 190, -74, "bailey-merlon-rear")}
+    ${baileyMerlons(-110, 190, -74, "bailey-merlon-rear", ruined)}
     <polygon class="bailey-wall-side" points="-150,-32 -110,-74 -110,-32 -150,10"/>
     <polygon class="bailey-wall-side" points="150,-32 190,-74 190,-32 150,10"/>
     <path class="bailey-walk" d="M -110 -32 h 300"/>
   `;
 }
 
-function baileyFront() {
+function baileyFront(ruined) {
   const courses = [];
   for (let row = 0; row < 2; row += 1) {
     const y = -30 + row * 20;
@@ -1899,8 +1905,8 @@ function baileyFront() {
       <rect class="bailey-turret" x="-16" y="-64" width="32" height="74" rx="3"/>
       <rect class="bailey-turret-cap" x="-21" y="-78" width="42" height="15" rx="3"/>
       <rect class="bailey-merlon" x="-21" y="-90" width="13" height="14" rx="2"/>
-      <rect class="bailey-merlon" x="-6" y="-90" width="13" height="14" rx="2"/>
-      <rect class="bailey-merlon" x="8" y="-90" width="13" height="14" rx="2"/>
+      ${ruined ? "" : `<rect class="bailey-merlon" x="-6" y="-90" width="13" height="14" rx="2"/>`}
+      <rect class="bailey-merlon" x="8" y="${ruined ? -84 : -90}" width="13" height="${ruined ? 8 : 14}" rx="2"/>
       <rect class="tower-slit" x="-3" y="-52" width="6" height="18" rx="3"/>
     </g>
   `;
@@ -1911,8 +1917,8 @@ function baileyFront() {
     ${courses.join("")}
     <path class="bailey-arch" d="M -36 -18 v -14 h 72 v 14 a 36 36 0 0 0 -72 0 Z"/>
     ${bars}
-    ${baileyMerlons(-150, -34, -32, "bailey-merlon")}
-    ${baileyMerlons(34, 150, -32, "bailey-merlon")}
+    ${baileyMerlons(-150, -34, -32, "bailey-merlon", ruined)}
+    ${baileyMerlons(34, 150, -32, "bailey-merlon", ruined)}
     ${turret(-150)}
     ${turret(150)}
     ${spikes}
@@ -1920,7 +1926,7 @@ function baileyFront() {
   `;
 }
 
-function castleTower(walled) {
+function castleTower(walled, ruined) {
   const courses = [];
   for (let row = 0; row < 7; row += 1) {
     const y = -196 + row * 24;
@@ -1933,11 +1939,14 @@ function castleTower(walled) {
     }
   }
 
-  const merlons = [-80, -45, -10, 25, 60]
-    .map((x) => `<rect class="tower-merlon" x="${x}" y="-262" width="20" height="17" rx="2"/>`)
+  const merlons = (ruined
+    ? [[-80, 12], [-10, 17], [25, 8], [60, 14]]
+    : [[-80, 17], [-45, 17], [-10, 17], [25, 17], [60, 17]]
+  )
+    .map(([x, height]) => `<rect class="tower-merlon" x="${x}" y="${-245 - height}" width="20" height="${height}" rx="2"/>`)
     .join("");
 
-  const sideMerlons = [0, 0.38, 0.76]
+  const sideMerlons = (ruined ? [0, 0.76] : [0, 0.38, 0.76])
     .map((t) => {
       const end = t + 0.24;
       const ax = 80 + 44 * t;
@@ -1948,7 +1957,7 @@ function castleTower(walled) {
     })
     .join("");
 
-  const machicolations = [-72, -48, -24, 0, 24, 48]
+  const machicolations = (ruined ? [-72, -24, 0, 48] : [-72, -48, -24, 0, 24, 48])
     .map((x) => `<rect class="tower-machicolation" x="${x}" y="-206" width="13" height="11" rx="2"/>`)
     .join("");
 
@@ -1970,9 +1979,9 @@ function castleTower(walled) {
         .join("");
 
   return `
-    <g class="castle-tower">
+    <g class="castle-tower${ruined ? " is-ruined" : ""}">
       <ellipse class="prop-shadow" cx="22" cy="8" rx="${walled ? 182 : 128}" ry="${walled ? 34 : 26}"/>
-      ${walled ? baileyRear() : ""}
+      ${walled ? baileyRear(ruined) : ""}
 
       <polygon class="tower-wall-side" points="70,-196 114,-221 114,-25 70,0"/>
       <rect class="tower-wall-front" x="-70" y="-196" width="140" height="196"/>
@@ -2026,7 +2035,39 @@ function castleTower(walled) {
         <polygon class="spear-tip" points="2,-112 7,-127 12,-110"/>
       </g>
 
-      ${walled ? baileyFront() : ""}
+      ${walled ? baileyFront(ruined) : ""}
+      ${ruined ? keepDecay() : ""}
+    </g>
+  `;
+}
+
+function keepDecay() {
+  const rubble = [[-122, 6], [-98, 14], [-58, 16], [44, 18], [104, 8], [132, 15]]
+    .map(([cx, cy], index) => `<ellipse class="keep-rubble" cx="${cx}" cy="${cy}" rx="${8 + (index % 3) * 3}" ry="${5 + (index % 2) * 2}"/>`)
+    .join("");
+
+  const moss = [[-56, -20, 24, 9], [16, -30, 28, 8], [62, -8, 16, 7], [-38, -244, 20, 6], [44, -244, 24, 5], [-146, 2, 20, 7], [148, 4, 18, 6]]
+    .map(([cx, cy, rx, ry]) => `<ellipse class="keep-moss" cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}"/>`)
+    .join("");
+
+  const vine = (x, topY, flip) => {
+    const leaves = Array.from({ length: 6 }, (_, index) => {
+      const ly = topY + index * 24;
+      const lx = x + (index % 2 === 0 ? 8 : -8) * flip;
+      return `<circle class="keep-ivy-leaf" cx="${lx}" cy="${ly}" r="${5 - (index % 2)}"/>`;
+    }).join("");
+    return `<path class="keep-ivy" d="M ${x} ${topY} q ${10 * flip} 34 0 68 q ${-10 * flip} 34 0 66"/>${leaves}`;
+  };
+
+  return `
+    <g class="keep-decay">
+      <path class="keep-crack" d="M -48 -192 l 11 26 l -9 19 l 13 27 l -6 24 M 34 -164 l -12 23 l 10 21 l -14 27 M 60 -92 l -11 21 l 7 19"/>
+      <path class="keep-crack keep-crack-thin" d="M -16 -138 l 9 17 l -7 16 M 12 -58 l -9 15 M -112 -18 l 8 14 M 118 -20 l -7 13"/>
+      <path class="keep-chip" d="M -80 -256 l 14 -6 l 8 11 Z M 25 -251 l 20 -4 l -2 10 Z M 124 -286 l -16 4 l 6 10 Z"/>
+      ${vine(-62, -186, 1)}
+      ${vine(56, -150, -1)}
+      ${moss}
+      ${rubble}
     </g>
   `;
 }
@@ -2265,7 +2306,28 @@ function weaponArt() {
   return wheeledCrossbow();
 }
 
-function keepWatchtower(x, y, bannerClass) {
+function keepWatchtower(x, y, bannerClass, ruined) {
+  const crown = ruined
+    ? `
+      <path class="tower-crown" d="M -34 -118 h 68 v -14 l -18 6 l -16 -10 l -20 8 l -14 -6 Z"/>
+      <rect class="tower-merlon" x="-32" y="-146" width="12" height="16" rx="2"/>
+      <rect class="tower-merlon" x="18" y="-140" width="12" height="10" rx="2"/>
+    `
+    : `
+      <rect class="tower-crown" x="-34" y="-138" width="68" height="20" rx="4"/>
+      ${merlonRow(-34, 34, -138, 11, 9, 13)}
+    `;
+
+  const decay = ruined
+    ? `
+      <path class="keep-crack" d="M -14 -112 l 8 20 l -6 17 l 9 22 M 16 -76 l -7 16 l 6 15"/>
+      <ellipse class="keep-moss" cx="-18" cy="-8" rx="14" ry="6"/>
+      <ellipse class="keep-moss" cx="20" cy="-4" rx="11" ry="5"/>
+      <ellipse class="keep-rubble" cx="-40" cy="6" rx="10" ry="5"/>
+      <ellipse class="keep-rubble" cx="38" cy="9" rx="8" ry="4"/>
+    `
+    : "";
+
   return `
     <g class="watchtower" transform="translate(${x} ${y})">
       <ellipse class="prop-shadow" cx="8" cy="5" rx="48" ry="15"/>
@@ -2274,12 +2336,12 @@ function keepWatchtower(x, y, bannerClass) {
       <rect class="tower-door" x="-10" y="-32" width="20" height="32" rx="4"/>
       <rect class="tower-window" x="-6" y="-70" width="12" height="15" rx="6"/>
       <rect class="tower-window" x="-6" y="-104" width="12" height="13" rx="6"/>
-      <rect class="tower-crown" x="-34" y="-138" width="68" height="20" rx="4"/>
-      ${merlonRow(-34, 34, -138, 11, 9, 13)}
+      ${crown}
       <rect class="banner-pole" x="30" y="-142" width="4" height="50" rx="2"/>
       <g class="banner-cloth-wrap">
         <path class="banner-cloth ${bannerClass}" d="M 34 -138 h 24 v 34 l -12 -7 l -12 7 Z"/>
       </g>
+      ${decay}
     </g>
   `;
 }
@@ -2306,7 +2368,20 @@ function fourTowerKeep() {
   `;
 }
 
+function ancientStoneKeep() {
+  return `
+    <g class="ancient-keep">
+      ${keepWatchtower(-196, -56, "banner-blue", true)}
+      ${keepWatchtower(232, -56, "banner-gold", true)}
+      ${keepWatchtower(-196, 64, "banner-blue", true)}
+      ${keepWatchtower(232, 64, "banner-gold", true)}
+      ${castleTower(true, true)}
+    </g>
+  `;
+}
+
 function renderHomeSvg() {
+  if (state.tentLevel >= 9) return ancientStoneKeep();
   if (state.tentLevel >= 7) return fourTowerKeep();
   if (state.tentLevel >= 6) return twinTowerKeep();
   if (state.tentLevel === 5) return castleTower(true);

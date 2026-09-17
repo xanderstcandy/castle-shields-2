@@ -2895,6 +2895,111 @@ body:has(.camp-screen) {
   fill: rgba(74, 170, 74, 0.6);
 }
 
+.ancient-keep .tower-wall-front,
+.ancient-keep .bailey-wall-front {
+  fill: #8d9099;
+}
+
+.ancient-keep .tower-wall-side,
+.ancient-keep .bailey-wall-side {
+  fill: #5f6570;
+}
+
+.ancient-keep .bailey-wall-rear {
+  fill: #767c86;
+}
+
+.ancient-keep .bailey-stone {
+  fill: #949aa4;
+  stroke: #666d79;
+}
+
+.ancient-keep .bailey-merlon,
+.ancient-keep .bailey-turret-cap {
+  fill: #949aa4;
+}
+
+.ancient-keep .bailey-merlon-rear,
+.ancient-keep .bailey-turret {
+  fill: #7e848f;
+}
+
+.ancient-keep .bailey-turret-side {
+  fill: #575d68;
+}
+
+.ancient-keep .bailey-arch {
+  fill: #4c525c;
+}
+
+.ancient-keep .bailey-walk {
+  stroke: #575d68;
+}
+
+.ancient-keep .bailey-path {
+  fill: #9a968b;
+}
+
+.ancient-keep .tower-merlon,
+.ancient-keep .tower-parapet,
+.ancient-keep .tower-corbel,
+.ancient-keep .tower-crown {
+  fill: #98a0aa;
+}
+
+.ancient-keep .tower-merlon-side,
+.ancient-keep .tower-parapet-side,
+.ancient-keep .tower-corbel-side {
+  fill: #646b77;
+}
+
+.ancient-keep .tower-stone {
+  stroke: #6f7683;
+  opacity: 0.82;
+}
+
+.ancient-keep .tower-body {
+  opacity: 0.88;
+}
+
+.keep-crack {
+  fill: none;
+  stroke: rgba(40, 50, 64, 0.55);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.keep-crack-thin {
+  stroke-width: 1.8;
+  stroke: rgba(40, 50, 64, 0.42);
+}
+
+.keep-chip {
+  fill: rgba(52, 62, 76, 0.45);
+}
+
+.keep-moss {
+  fill: rgba(94, 142, 72, 0.55);
+}
+
+.keep-rubble {
+  fill: #7f8792;
+  stroke: rgba(40, 50, 64, 0.35);
+  stroke-width: 1;
+}
+
+.keep-ivy {
+  fill: none;
+  stroke: rgba(66, 118, 58, 0.72);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.keep-ivy-leaf {
+  fill: rgba(88, 152, 74, 0.82);
+}
+
 .horse-body,
 .horse-head {
   fill: #8a5a35;
