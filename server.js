@@ -122,7 +122,13 @@ async function handleApi(req, res, urlPath) {
   }
 
   if (urlPath === "/api/save") {
-    if (index === -1 || accounts[index].password !== password) {
+    if (index === -1) {
+      accounts.push({ username, password, save: payload.save ?? null });
+      writeAccounts(accounts);
+      sendJson(res, 200, { saved: true });
+      return;
+    }
+    if (accounts[index].password !== password) {
       sendJson(res, 401, { error: "Sign in again to keep saving." });
       return;
     }

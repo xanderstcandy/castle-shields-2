@@ -605,6 +605,13 @@ async function restoreBackupToServer(backup) {
   return { username: account.username, save: backup.save };
 }
 
+function restoreLocalBackup() {
+  const backup = readLocalBackup();
+  if (!backup || !backup.save) return;
+
+  createAccount(backup.username, backup.password).catch(() => {});
+}
+
 async function signInAccount(username, password) {
   try {
     return await signInRequest(username, password);
@@ -7418,6 +7425,7 @@ document.addEventListener("visibilitychange", () => {
 });
 
 render();
+restoreLocalBackup();
 
 setTimeout(() => {
   state.screen = "sign-in";
