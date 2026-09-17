@@ -41,6 +41,9 @@ const MINE_MINT_MULTIPLIER = 1.5;
 const WINDMILL_POSITION = { x: 770, y: 214 };
 const WINDMILL_COST = 15;
 const WINDMILL_FARM_POP_BONUS = 2;
+const PADDOCK_CENTER = { x: 550, y: 536 };
+const PADDOCK_COST = 18;
+const PADDOCK_EXTRA_STABLE_POP = 1;
 const MIN_STRUCTURE_DAMAGE = 0.5;
 const WALL_BLOCK_RANGE = 48;
 const BUILD_SLOTS = [
@@ -487,6 +490,7 @@ const state = {
   healingFirePanelOpen: false,
   mine: false,
   windmill: false,
+  paddock: false,
   buildings: [],
   buildPanelSlot: null,
   gameOver: false,
@@ -637,6 +641,7 @@ function serializeGameSave() {
     healingFire: state.healingFire,
     mine: state.mine,
     windmill: state.windmill,
+    paddock: state.paddock,
     gameOver: state.gameOver,
     paused: state.paused,
     combat: {
@@ -688,6 +693,7 @@ function applyGameSave(save) {
   state.healingFire = Boolean(save.healingFire);
   state.mine = Boolean(save.mine);
   state.windmill = Boolean(save.windmill);
+  state.paddock = Boolean(save.paddock);
   state.gameOver = Boolean(save.gameOver);
   state.paused = Boolean(save.paused);
   combat.pauseStartedAt = state.paused ? performance.now() : 0;
@@ -2916,8 +2922,11 @@ function fenceRect(x, y, width, height, step) {
 }
 
 function paddockGroup() {
+  return `<g class="paddock">${paddockArt()}</g>`;
+}
+
+function paddockArt() {
   return `
-    <g class="paddock">
       <ellipse class="paddock-ground" cx="550" cy="536" rx="112" ry="66"/>
       ${fenceRect(444, 476, 212, 124, 34)}
       ${horse(510, 530, 0.62, false)}
@@ -2927,7 +2936,6 @@ function paddockGroup() {
         <path class="trough-body" d="M -22 -12 h 44 l -6 14 h -32 Z"/>
         <rect class="trough-water" x="-17" y="-10" width="34" height="5" rx="2"/>
       </g>
-    </g>
   `;
 }
 
@@ -3858,7 +3866,7 @@ function trainUnit(slotIndex, unitType) {
   const def = UNIT_DEF[unitType];
   const building = getSlotBuilding(slotIndex);
   if (!def || !building || building.id !== def.building || building.level < def.unlockLevel) return false;
-  if (getUnitCount() >= getTentPopulation()) return false;
+  if (!canTrainUnitType(unitType)) return false;
   if (state.coins < def.cost) return false;
 
   state.coins -= def.cost;
@@ -4250,6 +4258,16 @@ function getTentPopulation() {
   return getTentDef().population + getFarmPopulation(getBuildingLevels("farm"));
 }
 
+function getUnitPopulationCap(unitType) {
+  const def = UNIT_DEF[unitType];
+  const extra = state.paddock && def && def.building === "stable" ? PADDOCK_EXTRA_STABLE_POP : 0;
+  return getTentPopulation() + extra;
+}
+
+function canTrainUnitType(unitType) {
+  return getUnitCount() < getUnitPopulationCap(unitType);
+}
+
 function getTentRetaliation() {
   return getTentDef().retaliation;
 }
@@ -4406,6 +4424,7 @@ function handleGameOver() {
   state.healingFire = false;
   state.mine = false;
   state.windmill = false;
+  state.paddock = false;
   resetCombatState();
   combat.phaseEndsAt = performance.now() + WAVE_PEACE_MS;
   refreshCombatHud();
@@ -4684,6 +4703,16 @@ function buyWindmill() {
   return true;
 }
 
+function buyPaddock() {
+  if (state.gameOver || state.paddock || state.gems < PADDOCK_COST) return false;
+
+  state.gems -= PADDOCK_COST;
+  state.paddock = true;
+  refreshCombatHud();
+  render();
+  return true;
+}
+
 function renderLandCard(card) {
   const disabled = card.owned || state.gems < card.cost;
 
@@ -4733,6 +4762,15 @@ function renderLandSection() {
       action: "buy-windmill",
       viewBox: "-160 -185 320 200",
       art: `<g transform="scale(0.92)">${windmillArt()}</g>`
+    },
+    {
+      label: "Paddock",
+      blurb: `Grazing ground · train ${PADDOCK_EXTRA_STABLE_POP} extra stable unit past max population.`,
+      cost: PADDOCK_COST,
+      owned: state.paddock,
+      action: "buy-paddock",
+      viewBox: "-125 -80 250 155",
+      art: `<g transform="translate(${-PADDOCK_CENTER.x} ${-PADDOCK_CENTER.y})">${paddockArt()}</g>`
     }
   ];
 
@@ -6490,10 +6528,9 @@ function renderTrainUnitButtons(building) {
   );
   if (!unlocked.length) return "";
 
-  const popFull = getUnitCount() >= getTentPopulation();
-
   return unlocked
     .map(([type, unit]) => {
+      const popFull = !canTrainUnitType(type);
       const canAfford = state.coins >= unit.cost;
       const disabled = popFull || !canAfford;
       const rangeNote = unit.range ? " · ranged" : "";
@@ -6740,7 +6777,7 @@ function renderCamp() {
       ${state.windmill ? windmillGroup() : ""}
       ${watchtowerGroup()}
       ${ruinsGroup()}
-      ${paddockGroup()}
+      ${state.paddock ? paddockGroup() : ""}
       ${state.mine ? quarryGroup() : ""}
       ${farmGroup()}
       ${sheepFlock(486, 726, 0.62)}
@@ -7126,6 +7163,13 @@ app.addEventListener("click", (event) => {
     if (state.gameOver || !state.shopOpen) return;
     event.stopPropagation();
     buyWindmill();
+    return;
+  }
+
+  if (actionTarget.dataset.action === "buy-paddock") {
+    if (state.gameOver || !state.shopOpen) return;
+    event.stopPropagation();
+    buyPaddock();
     return;
   }
 
