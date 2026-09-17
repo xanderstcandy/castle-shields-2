@@ -1380,6 +1380,12 @@ body:has(.camp-screen) {
   box-shadow: inset 0 0 0 1px rgba(248, 113, 113, 0.38);
 }
 
+.wall-build-button.is-locked .wall-build-cost {
+  color: #e2e8f0;
+  background: linear-gradient(135deg, rgba(148, 163, 184, 0.22), rgba(100, 116, 139, 0.12));
+  box-shadow: inset 0 0 0 1px rgba(203, 213, 225, 0.32);
+}
+
 .wall-build-button.is-built .wall-build-cost {
   color: #bbf7d0;
   background: linear-gradient(135deg, rgba(134, 239, 172, 0.2), rgba(34, 197, 94, 0.12));
@@ -1471,11 +1477,11 @@ body:has(.camp-screen) {
   text-shadow: 0 1px 0 rgba(91, 33, 182, 0.45);
 }
 
-.gem-shop-wrap {
+.shop-wrap {
   position: relative;
 }
 
-.gem-shop-button {
+.shop-button {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -1487,52 +1493,40 @@ body:has(.camp-screen) {
   box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.18);
 }
 
-.gem-shop-button.is-open,
-.gem-shop-button:hover,
-.gem-shop-button:focus-visible {
+.shop-button.is-open,
+.shop-button:hover,
+.shop-button:focus-visible {
   background:
     linear-gradient(180deg, rgba(196, 181, 253, 0.24), transparent 58%),
     rgba(91, 33, 182, 0.42);
   box-shadow: inset 0 0 0 1px rgba(216, 180, 254, 0.55);
 }
 
-.gem-shop-button-icon-wrap {
+.shop-button-icon-wrap {
   display: grid;
   place-items: center;
   width: 24px;
   height: 24px;
-  border-radius: 6px;
-  transform: rotate(45deg);
-  background: radial-gradient(circle at 35% 28%, rgba(216, 180, 254, 0.42), rgba(76, 29, 149, 0.5) 72%);
-}
-
-.gem-shop-button-icon-wrap-coin {
-  transform: none;
   border-radius: 50%;
   background: radial-gradient(circle at 35% 28%, rgba(253, 224, 71, 0.35), rgba(120, 53, 15, 0.42) 72%);
 }
 
-.gem-shop-button-icon {
+.shop-button-icon {
   display: block;
   width: 16px;
   height: 16px;
-  transform: rotate(-45deg);
   object-fit: contain;
   mix-blend-mode: multiply;
 }
 
-.gem-shop-button-icon-wrap-coin .gem-shop-button-icon {
-  transform: none;
-}
-
-.gem-shop-panel {
+.shop-panel {
   position: absolute;
   top: calc(100% + 10px);
   right: 0;
   z-index: 8;
   display: grid;
-  gap: 10px;
-  width: min(280px, 72vw);
+  gap: 12px;
+  width: min(330px, 84vw);
   padding: 14px 16px;
   border-radius: 16px;
   border: 1px solid rgba(167, 139, 250, 0.42);
@@ -1540,7 +1534,7 @@ body:has(.camp-screen) {
   box-shadow: 0 18px 36px rgba(2, 8, 20, 0.52);
 }
 
-.gem-shop-kicker {
+.shop-kicker {
   margin: 0;
   color: #c4b5fd;
   font-size: 0.66rem;
@@ -1549,22 +1543,91 @@ body:has(.camp-screen) {
   text-transform: uppercase;
 }
 
-.gem-shop-offer {
-  margin: 0;
-  color: #ede9fe;
-  font-size: 0.95rem;
-  font-weight: 700;
-  line-height: 1.35;
+.shop-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.7);
+  box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.22);
 }
 
-.gem-shop-coin-reward {
+.shop-tab {
+  padding: 8px 6px;
+  border: 0;
+  border-radius: 9px;
+  color: #c4b5fd;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 800;
+  cursor: pointer;
+  background: transparent;
+}
+
+.shop-tab:hover,
+.shop-tab:focus-visible {
+  color: #f3e8ff;
+  background: rgba(91, 33, 182, 0.4);
+}
+
+.shop-tab.is-active {
+  color: #f8fafc;
+  background: linear-gradient(180deg, rgba(196, 181, 253, 0.3), rgba(91, 33, 182, 0.55));
+  box-shadow: inset 0 0 0 1px rgba(216, 180, 254, 0.55);
+}
+
+.shop-offers {
+  display: grid;
+  gap: 8px;
+}
+
+.shop-offer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.62);
+  box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.2);
+}
+
+.shop-offer-deal {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #ede9fe;
+  font-size: 0.95rem;
+  font-weight: 800;
+}
+
+.shop-amount {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  vertical-align: baseline;
 }
 
-.gem-shop-inline-icon {
+.shop-offer-arrow {
+  color: #a78bfa;
+}
+
+.shop-icon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 28%, rgba(253, 224, 71, 0.35), rgba(120, 53, 15, 0.42) 72%);
+}
+
+.shop-icon-gems {
+  border-radius: 6px;
+  background: radial-gradient(circle at 35% 28%, rgba(216, 180, 254, 0.42), rgba(76, 29, 149, 0.5) 72%);
+}
+
+.shop-icon-image {
   display: block;
   width: 18px;
   height: 18px;
@@ -1572,9 +1635,168 @@ body:has(.camp-screen) {
   mix-blend-mode: multiply;
 }
 
-.gem-shop-trade-button {
-  width: 100%;
+.shop-offer-button {
+  padding: 7px 14px;
+  border: 0;
+  border-radius: 999px;
+  color: #0f172a;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 900;
+  cursor: pointer;
+  background: linear-gradient(180deg, #fde68a, #f59e0b);
+  box-shadow: 0 6px 14px rgba(180, 83, 9, 0.35);
+}
+
+.shop-offer-button:hover,
+.shop-offer-button:focus-visible {
+  background: linear-gradient(180deg, #fef3c7, #fbbf24);
+}
+
+.shop-offer-button.is-broke {
+  color: #cbd5f5;
+  cursor: not-allowed;
+  background: rgba(71, 85, 105, 0.7);
+  box-shadow: none;
+}
+
+.shop-empty {
   margin: 0;
+  padding: 18px 0;
+  color: #a5b4fc;
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.shop-land {
+  display: grid;
+  gap: 8px;
+  max-height: 264px;
+  overflow-y: auto;
+}
+
+.shop-land-card {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 10px 12px 12px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.62);
+  box-shadow: inset 0 0 0 1px rgba(167, 139, 250, 0.2);
+}
+
+.shop-land-art {
+  width: 100%;
+  height: 84px;
+}
+
+.shop-land-label {
+  color: #ede9fe;
+  font-size: 0.95rem;
+  font-weight: 800;
+}
+
+.shop-land-blurb {
+  color: #a5b4fc;
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+.shop-land-card .shop-offer-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.fire-panel {
+  position: absolute;
+  z-index: 10;
+  display: grid;
+  gap: 10px;
+  width: min(250px, 66vw);
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(251, 191, 36, 0.32);
+  background: linear-gradient(180deg, rgba(28, 18, 10, 0.96), rgba(9, 6, 3, 0.98));
+  box-shadow: 0 18px 36px rgba(2, 8, 20, 0.52);
+  transform: translate(-50%, calc(-100% - 20px));
+}
+
+.fire-panel-kicker {
+  margin: 0;
+  color: #fcd34d;
+  font-size: 0.66rem;
+  font-weight: 900;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.fire-panel-empty {
+  margin: 0;
+  padding: 10px 0;
+  color: #fde68a;
+  font-size: 0.86rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.fire-panel-units {
+  display: grid;
+  gap: 6px;
+  max-height: 232px;
+  overflow-y: auto;
+}
+
+.fire-unit-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 8px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 12px;
+  text-align: left;
+  color: #fef3c7;
+  font: inherit;
+  cursor: pointer;
+  background: rgba(251, 191, 36, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(251, 191, 36, 0.24);
+  transition: background 160ms ease, box-shadow 160ms ease;
+}
+
+.fire-unit-row:hover,
+.fire-unit-row:focus-visible {
+  background: rgba(251, 191, 36, 0.2);
+  box-shadow: inset 0 0 0 1px rgba(253, 224, 71, 0.6);
+}
+
+.fire-unit-row.is-healing {
+  background: rgba(134, 239, 172, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(134, 239, 172, 0.5);
+}
+
+.fire-unit-name {
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.fire-unit-state {
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #fcd34d;
+}
+
+.fire-unit-row.is-healing .fire-unit-state {
+  color: #bbf7d0;
+}
+
+.fire-unit-health {
+  grid-column: 1 / -1;
+  font-size: 0.76rem;
+  color: #d6c7a1;
 }
 
 .grass-base {

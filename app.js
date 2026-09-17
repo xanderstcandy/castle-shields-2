@@ -16,8 +16,11 @@ const TENT_MAX_LEVEL = TENT_LEVELS.length;
 const TENT_TARGET = { x: 800, y: 856 };
 const TENT_ATTACK_RANGE = 36;
 const STARTING_COINS = 35;
-const GEM_SHOP_DIAMOND_COST = 5;
-const GEM_SHOP_COIN_REWARD = 55;
+const EXCHANGE_OFFERS = [
+  { id: "gems-5", spend: "gems", spendAmount: 5, earn: "coins", earnAmount: 55 },
+  { id: "gems-10", spend: "gems", spendAmount: 10, earn: "coins", earnAmount: 145 },
+  { id: "coins-100", spend: "coins", spendAmount: 100, earn: "gems", earnAmount: 5 }
+];
 const WALL_POSITION = { x: 800, y: 668 };
 const WALL_LEVELS = [
   { label: "Timber Wall", maxHealth: 12, defense: 0, retaliation: 0, upgradeCost: 45 },
@@ -26,6 +29,14 @@ const WALL_LEVELS = [
 ];
 const WALL_MAX_LEVEL = WALL_LEVELS.length;
 const WALL_COST = 25;
+const WALL_TENT_REQUIREMENT = 2;
+const HEALING_FIRE_POSITION = { x: 834, y: 938 };
+const HEALING_FIRE_COST = 15;
+const HEALING_FIRE_HEAL_PER_SECOND = 0.25;
+const HEALING_FIRE_RANGE = 34;
+const MINE_POSITION = { x: 1084, y: 552 };
+const MINE_COST = 20;
+const MINE_MINT_MULTIPLIER = 1.5;
 const MIN_STRUCTURE_DAMAGE = 0.5;
 const WALL_BLOCK_RANGE = 48;
 const BUILD_SLOTS = [
@@ -466,7 +477,11 @@ const state = {
   crossbow: createDefaultCrossbow(),
   wall: null,
   wallPanelOpen: false,
-  gemShopOpen: false,
+  shopOpen: false,
+  shopTab: "exchange",
+  healingFire: false,
+  healingFirePanelOpen: false,
+  mine: false,
   buildings: [],
   buildPanelSlot: null,
   gameOver: false,
@@ -501,6 +516,7 @@ const combat = {
 let combatLayer = null;
 let combatLoopId = 0;
 let autoSaveTimer = 0;
+let shopPausedGame = false;
 
 function template(content, className = "center") {
   app.innerHTML = `<section class="screen ${className}">${content}</section>`;
@@ -558,6 +574,8 @@ function serializeGameSave() {
     crossbow: { level: state.crossbow.level, tier: state.crossbow.tier },
     wall: state.wall ? { level: state.wall.level, health: state.wall.health } : null,
     buildings: state.buildings.map((entry) => (entry ? { id: entry.id, level: entry.level } : null)),
+    healingFire: state.healingFire,
+    mine: state.mine,
     gameOver: state.gameOver,
     paused: state.paused,
     combat: {
@@ -606,13 +624,17 @@ function applyGameSave(save) {
           : null
       )
     : [];
+  state.healingFire = Boolean(save.healingFire);
+  state.mine = Boolean(save.mine);
   state.gameOver = Boolean(save.gameOver);
   state.paused = Boolean(save.paused);
   combat.pauseStartedAt = state.paused ? performance.now() : 0;
   state.tentUpgradeOpen = false;
   state.crossbowPanelOpen = false;
   state.wallPanelOpen = false;
-  state.gemShopOpen = false;
+  state.healingFirePanelOpen = false;
+  state.shopOpen = false;
+  shopPausedGame = false;
   state.buildPanelSlot = null;
 
   resetCombatState();
@@ -2592,7 +2614,7 @@ function campBase() {
       <g class="camp-crossbow" transform="translate(${CROSSBOW_POSITION.x} ${CROSSBOW_POSITION.y}) scale(0.58)">
         <g class="crossbow-aim">${weaponArt()}</g>
       </g>
-      <g transform="translate(800 962) scale(0.5)">${campfire()}</g>
+      ${state.healingFire ? `<g class="healing-fire" transform="translate(${HEALING_FIRE_POSITION.x} ${HEALING_FIRE_POSITION.y}) scale(0.5)">${campfire()}</g>` : ""}
       <g transform="translate(706 800) scale(0.46)">${bannerPole("banner-blue")}</g>
       <g transform="translate(894 800) scale(0.46)">${bannerPole("banner-gold")}</g>
       <g transform="translate(982 978) scale(0.46)">${trainingDummy()}</g>
@@ -2844,8 +2866,11 @@ function paddockGroup() {
 }
 
 function quarryGroup() {
+  return `<g class="quarry" transform="translate(${MINE_POSITION.x} ${MINE_POSITION.y})">${quarryArt()}</g>`;
+}
+
+function quarryArt() {
   return `
-    <g class="quarry" transform="translate(1084 552)">
       <ellipse class="quarry-ground" cx="0" cy="20" rx="118" ry="62"/>
       <path class="quarry-mound" d="M -104 22 q 18 -76 66 -84 q 52 -10 74 42 q 12 26 4 42 Z"/>
       <path class="quarry-face" d="M -66 22 q 6 -44 34 -52 q 26 -6 40 20 q 8 16 4 32 Z"/>
@@ -2869,7 +2894,6 @@ function quarryGroup() {
       <path class="rock-body" d="M -96 24 q -4 -16 10 -21 q 14 -6 22 2 q 10 9 4 19 Z"/>
       <path class="rock-body" d="M 74 26 q -4 -14 8 -18 q 12 -5 19 2 q 8 8 3 16 Z"/>
       <path class="quarry-crack" d="M -40 -36 l 10 -14 M 14 -30 l 8 -12"/>
-    </g>
   `;
 }
 
@@ -3717,6 +3741,51 @@ function moveUnitOnLaneTowardIndex(unit, deltaSeconds, targetIndex, options = {}
   clampUnitWithinCrossbowRange(unit);
 }
 
+function moveUnitTowardPoint(unit, deltaSeconds, target) {
+  const def = UNIT_DEF[unit.type];
+  const speed = Math.max(def.speed, 1) * UNIT_SPEED_SCALE;
+  const dx = target.x - unit.x;
+  const dy = target.y - unit.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist <= 0.5) return;
+
+  const step = Math.min(speed * deltaSeconds, dist);
+  if (dx > 0.6) unit.facing = 1;
+  else if (dx < -0.6) unit.facing = -1;
+  unit.x += (dx / dist) * step;
+  unit.y += (dy / dist) * step;
+}
+
+function isUnitHealing(unit) {
+  return Boolean(unit.healing) && state.healingFire;
+}
+
+function sendUnitToHealingFire(unitId) {
+  if (state.gameOver || !state.healingFire) return false;
+
+  const unit = combat.units.find((entry) => entry.id === unitId);
+  if (!unit) return false;
+
+  unit.healing = !unit.healing;
+  syncCampPanels();
+  return true;
+}
+
+function updateHealingUnit(unit, deltaSeconds) {
+  const dist = Math.hypot(HEALING_FIRE_POSITION.x - unit.x, HEALING_FIRE_POSITION.y - unit.y);
+
+  if (dist > HEALING_FIRE_RANGE) {
+    moveUnitTowardPoint(unit, deltaSeconds, HEALING_FIRE_POSITION);
+    return;
+  }
+
+  unit.health = Math.min(unit.maxHealth, unit.health + HEALING_FIRE_HEAL_PER_SECOND * deltaSeconds);
+  if (unit.health >= unit.maxHealth) {
+    unit.health = unit.maxHealth;
+    unit.healing = false;
+  }
+}
+
 function trainUnit(slotIndex, unitType) {
   if (state.gameOver) return false;
 
@@ -3834,6 +3903,14 @@ function updateUnits(deltaSeconds, now) {
       continue;
     }
 
+    if (unit.healing) {
+      if (isUnitHealing(unit)) {
+        updateHealingUnit(unit, deltaSeconds);
+        continue;
+      }
+      unit.healing = false;
+    }
+
     const laneThreat = findNearestEnemyOnLane(unit);
     const rangedTarget = def.range ? findNearestEnemy(unit.x, unit.y) : laneThreat;
 
@@ -3880,6 +3957,11 @@ function updateUnits(deltaSeconds, now) {
   }
 }
 
+function getMintPayout(mintLevels) {
+  const base = mintLevels * MINT_PAYOUT_PER_LEVEL;
+  return state.mine ? Math.round(base * MINE_MINT_MULTIPLIER) : base;
+}
+
 function updateMint(deltaSeconds) {
   const mintLevels = getBuildingLevels("mint");
   if (mintLevels <= 0) {
@@ -3890,7 +3972,7 @@ function updateMint(deltaSeconds) {
   combat.mintAccumMs += deltaSeconds * 1000;
   while (combat.mintAccumMs >= MINT_PAYOUT_MS) {
     combat.mintAccumMs -= MINT_PAYOUT_MS;
-    state.coins += mintLevels * MINT_PAYOUT_PER_LEVEL;
+    state.coins += getMintPayout(mintLevels);
     refreshCombatHud();
   }
 }
@@ -3931,8 +4013,16 @@ function getNextWallDef() {
   return isWallMaxed() ? null : WALL_LEVELS[getWallLevel()];
 }
 
+function isWallUnlocked() {
+  return state.tentLevel >= WALL_TENT_REQUIREMENT;
+}
+
+function getWallRequirementLabel() {
+  return TENT_LEVELS[WALL_TENT_REQUIREMENT - 1].label;
+}
+
 function buildWall() {
-  if (state.gameOver || isWallStanding()) return false;
+  if (state.gameOver || isWallStanding() || !isWallUnlocked()) return false;
   if (state.coins < WALL_COST) return false;
 
   state.coins -= WALL_COST;
@@ -4235,11 +4325,15 @@ function handleGameOver() {
   state.tentUpgradeOpen = false;
   state.crossbowPanelOpen = false;
   state.wallPanelOpen = false;
-  state.gemShopOpen = false;
+  state.healingFirePanelOpen = false;
+  state.shopOpen = false;
+  shopPausedGame = false;
   state.buildPanelSlot = null;
   state.buildings = [];
   state.crossbow = createDefaultCrossbow();
   state.wall = null;
+  state.healingFire = false;
+  state.mine = false;
   resetCombatState();
   combat.phaseEndsAt = performance.now() + WAVE_PEACE_MS;
   refreshCombatHud();
@@ -4359,23 +4453,19 @@ function refreshCombatHud() {
 
   const wallButton = document.querySelector(".wall-build-button");
   if (wallButton) {
-    const wallCost = isWallStanding() ? getWallUpgradeCost() : WALL_COST;
+    const wallStanding = isWallStanding();
+    const wallLocked = !wallStanding && !isWallUnlocked();
+    const wallCost = wallStanding ? getWallUpgradeCost() : WALL_COST;
     wallButton.classList.toggle(
       "is-broke",
-      !(isWallStanding() && isWallMaxed()) && state.coins < wallCost
+      !wallLocked && !(wallStanding && isWallMaxed()) && state.coins < wallCost
     );
   }
 
-  const gemShopButton = document.querySelector(".gem-shop-button");
-  if (gemShopButton) {
-    gemShopButton.classList.toggle("is-open", state.gemShopOpen);
-    gemShopButton.setAttribute("aria-expanded", String(state.gemShopOpen));
-  }
-
-  const gemShopTradeButton = document.querySelector(".gem-shop-trade-button");
-  if (gemShopTradeButton) {
-    gemShopTradeButton.classList.toggle("is-broke", state.gems < GEM_SHOP_DIAMOND_COST);
-    gemShopTradeButton.disabled = state.gems < GEM_SHOP_DIAMOND_COST;
+  const shopButton = document.querySelector(".shop-button");
+  if (shopButton) {
+    shopButton.classList.toggle("is-open", state.shopOpen);
+    shopButton.setAttribute("aria-expanded", String(state.shopOpen));
   }
 
   const pauseButton = document.querySelector(".camp-pause-button");
@@ -4390,41 +4480,207 @@ function refreshCombatHud() {
   if (pauseOverlay) {
     pauseOverlay.hidden = !state.paused;
   }
+
+  refreshHealingFirePanel();
 }
 
-function tradeGemsForCoins() {
-  if (state.gameOver || state.gems < GEM_SHOP_DIAMOND_COST) return false;
+function refreshHealingFirePanel() {
+  const panel = document.querySelector(".fire-panel");
+  if (!panel) return;
 
-  state.gems -= GEM_SHOP_DIAMOND_COST;
-  state.coins += GEM_SHOP_COIN_REWARD;
+  const rows = Array.from(panel.querySelectorAll(".fire-unit-row"));
+  const rowIds = rows.map((row) => Number(row.dataset.unitId)).join(",");
+  const unitIds = combat.units.map((unit) => unit.id).join(",");
+
+  if (rowIds !== unitIds) {
+    syncCampPanels();
+    return;
+  }
+
+  for (const row of rows) {
+    const unit = combat.units.find((entry) => entry.id === Number(row.dataset.unitId));
+    if (!unit) continue;
+
+    const healing = Boolean(unit.healing);
+    row.classList.toggle("is-healing", healing);
+    row.querySelector(".fire-unit-health").textContent = `${formatHp(unit.health)}/${unit.maxHealth} hp`;
+    row.querySelector(".fire-unit-state").textContent = healing
+      ? "Resting"
+      : unit.health >= unit.maxHealth
+        ? "Full"
+        : "Send";
+  }
+}
+
+function setShopOpen(open) {
+  if (open === state.shopOpen) return;
+
+  state.shopOpen = open;
+
+  if (open) {
+    state.shopTab = "exchange";
+    shopPausedGame = !state.paused;
+    setPaused(true);
+  } else if (shopPausedGame) {
+    shopPausedGame = false;
+    setPaused(false);
+  }
+
   refreshCombatHud();
+  render();
+}
+
+function runExchange(offerId) {
+  const offer = EXCHANGE_OFFERS.find((entry) => entry.id === offerId);
+  if (!offer || state.gameOver || state[offer.spend] < offer.spendAmount) return false;
+
+  state[offer.spend] -= offer.spendAmount;
+  state[offer.earn] += offer.earnAmount;
+  refreshCombatHud();
+  render();
   return true;
 }
 
-function renderGemShopPanel() {
-  if (!state.gemShopOpen) return "";
+function currencyIcon(currency) {
+  const src = currency === "gems" ? "gem.png" : "coin.png";
+  return `
+    <span class="shop-icon shop-icon-${currency}" aria-hidden="true">
+      <img class="shop-icon-image" src="${src}" alt="" width="20" height="20">
+    </span>
+  `;
+}
 
-  const canTrade = state.gems >= GEM_SHOP_DIAMOND_COST;
+function currencyLabel(currency, amount) {
+  return currency === "gems" ? `${amount} diamond` : `${amount} coin`;
+}
 
-  const coinIcon = `<img class="gem-shop-inline-icon" src="coin.png" alt="" width="18" height="18" aria-hidden="true">`;
+function renderExchangeSection() {
+  const offers = EXCHANGE_OFFERS.map((offer) => {
+    const canTrade = state[offer.spend] >= offer.spendAmount;
+
+    return `
+      <div class="shop-offer">
+        <span class="shop-offer-deal">
+          <span class="shop-amount">${offer.spendAmount}${currencyIcon(offer.spend)}</span>
+          <span class="shop-offer-arrow" aria-hidden="true">→</span>
+          <span class="shop-amount">${offer.earnAmount}${currencyIcon(offer.earn)}</span>
+        </span>
+        <button
+          class="shop-offer-button${canTrade ? "" : " is-broke"}"
+          type="button"
+          data-action="run-exchange"
+          data-offer-id="${offer.id}"
+          ${canTrade ? "" : "disabled"}
+          aria-label="Trade ${currencyLabel(offer.spend, offer.spendAmount)} for ${currencyLabel(offer.earn, offer.earnAmount)}"
+        >
+          Trade
+        </button>
+      </div>
+    `;
+  }).join("");
+
+  return `<div class="shop-offers">${offers}</div>`;
+}
+
+function buyHealingFire() {
+  if (state.gameOver || state.healingFire || state.gems < HEALING_FIRE_COST) return false;
+
+  state.gems -= HEALING_FIRE_COST;
+  state.healingFire = true;
+  refreshCombatHud();
+  render();
+  return true;
+}
+
+function buyMine() {
+  if (state.gameOver || state.mine || state.gems < MINE_COST) return false;
+
+  state.gems -= MINE_COST;
+  state.mine = true;
+  refreshCombatHud();
+  render();
+  return true;
+}
+
+function renderLandCard(card) {
+  const disabled = card.owned || state.gems < card.cost;
 
   return `
-    <div class="gem-shop-panel" role="dialog" aria-label="Shop">
-      <p class="gem-shop-kicker">Shop</p>
-      <p class="gem-shop-offer">
-        Trade ${GEM_SHOP_DIAMOND_COST} diamonds for
-        <span class="gem-shop-coin-reward">${coinIcon}${GEM_SHOP_COIN_REWARD}</span>
-        coin
-      </p>
+    <div class="shop-land-card">
+      <svg class="shop-land-art" viewBox="${card.viewBox}" aria-hidden="true">${card.art}</svg>
+      <span class="shop-land-label">${card.label}</span>
+      <span class="shop-land-blurb">${card.blurb}</span>
       <button
-        class="gem-shop-trade-button auth-button${canTrade ? "" : " is-broke"}"
+        class="shop-offer-button${disabled ? " is-broke" : ""}"
         type="button"
-        data-action="trade-gems-for-coins"
-        ${canTrade ? "" : "disabled"}
-        aria-label="Trade ${GEM_SHOP_DIAMOND_COST} diamonds for ${GEM_SHOP_COIN_REWARD} coin"
+        data-action="${card.action}"
+        ${disabled ? "disabled" : ""}
+        aria-label="${card.owned ? `${card.label} already built` : `Buy the ${card.label.toLowerCase()} for ${card.cost} diamonds`}"
       >
-        Trade
+        ${card.owned ? "Built" : `${card.cost}${currencyIcon("gems")}`}
       </button>
+    </div>
+  `;
+}
+
+function renderLandSection() {
+  const cards = [
+    {
+      label: "Healing Campfire",
+      blurb: "Send hurt troops here to rest and mend.",
+      cost: HEALING_FIRE_COST,
+      owned: state.healingFire,
+      action: "buy-healing-fire",
+      viewBox: "-80 -70 160 100",
+      art: `<g transform="scale(0.72)">${campfire()}</g>`
+    },
+    {
+      label: "Mine",
+      blurb: `Ore for the mint · +${Math.round((MINE_MINT_MULTIPLIER - 1) * 100)}% coin from every mint payout.`,
+      cost: MINE_COST,
+      owned: state.mine,
+      action: "buy-mine",
+      viewBox: "-118 -100 236 200",
+      art: `<g transform="scale(0.9)">${quarryArt()}</g>`
+    }
+  ];
+
+  return `<div class="shop-land">${cards.map(renderLandCard).join("")}</div>`;
+}
+
+function renderShopPanel() {
+  if (!state.shopOpen) return "";
+
+  const onExchange = state.shopTab === "exchange";
+
+  return `
+    <div class="shop-panel" role="dialog" aria-label="Shop">
+      <p class="shop-kicker">Shop</p>
+      <div class="shop-tabs" role="tablist" aria-label="Shop sections">
+        <button
+          class="shop-tab${onExchange ? " is-active" : ""}"
+          type="button"
+          role="tab"
+          data-action="show-shop-tab"
+          data-shop-tab="exchange"
+          aria-selected="${onExchange}"
+        >
+          Diamond Exchange
+        </button>
+        <button
+          class="shop-tab${onExchange ? "" : " is-active"}"
+          type="button"
+          role="tab"
+          data-action="show-shop-tab"
+          data-shop-tab="land"
+          aria-selected="${!onExchange}"
+        >
+          Buy Land
+        </button>
+      </div>
+      <div class="shop-section" role="tabpanel">
+        ${onExchange ? renderExchangeSection() : renderLandSection()}
+      </div>
     </div>
   `;
 }
@@ -6032,6 +6288,9 @@ function syncCampPanels() {
   syncCampPanel(viewport, ".crossbow-panel", state.crossbowPanelOpen, renderCrossbowPanel());
   syncCampPanel(viewport, ".wall-build-button", state.wallPanelOpen, renderWallPanelButton(), WALL_POSITION);
 
+  const firePanelOpen = state.healingFirePanelOpen && state.healingFire;
+  syncCampPanel(viewport, ".fire-panel", firePanelOpen, firePanelOpen ? renderHealingFirePanel() : "", HEALING_FIRE_POSITION);
+
   const buildSlot = state.buildPanelSlot === null ? null : BUILD_SLOTS[state.buildPanelSlot];
   const buildMarkup = buildSlot
     ? getSlotBuilding(state.buildPanelSlot)
@@ -6113,7 +6372,7 @@ function getBuildingPerkText(building) {
     return `+${building.level * FARM_POP_PER_LEVEL} population`;
   }
   if (building.id === "mint") {
-    return `+${building.level * MINT_PAYOUT_PER_LEVEL} coin every 15 sec`;
+    return `+${getMintPayout(building.level)} coin every 15 sec`;
   }
   return getBuildingConfig(building.id).summary;
 }
@@ -6126,7 +6385,7 @@ function getBuildingNextPerkText(building) {
     return `+${(building.level + 1) * FARM_POP_PER_LEVEL} population`;
   }
   if (building.id === "mint") {
-    return `+${(building.level + 1) * MINT_PAYOUT_PER_LEVEL} coin every 15 sec`;
+    return `+${getMintPayout(building.level + 1)} coin every 15 sec`;
   }
   const nextUnits = Object.values(UNIT_DEF)
     .filter((unit) => unit.building === building.id && unit.unlockLevel === building.level + 1)
@@ -6212,35 +6471,43 @@ function renderBuildingPanel(slotIndex) {
 function getWallPanelTitle() {
   const def = getWallDef();
   const thorns = def.retaliation > 0 ? ` · ${def.retaliation} thorns` : "";
-  if (!isWallStanding()) return `Build Wall · ${def.maxHealth} HP · ${def.defense} def`;
+  if (!isWallStanding()) {
+    if (!isWallUnlocked()) return "Upgrade Tent";
+    return `Build Wall · ${def.maxHealth} HP · ${def.defense} def`;
+  }
   return `${def.label} · ${formatHp(state.wall.health)}/${def.maxHealth} HP · ${def.defense} def${thorns}`;
 }
 
 function renderWallPanelButton() {
   const standing = isWallStanding();
+  const locked = !standing && !isWallUnlocked();
   const maxed = standing && isWallMaxed();
   const cost = standing ? getWallUpgradeCost() : WALL_COST;
   const canAfford = state.coins >= cost;
   const next = standing ? getNextWallDef() : null;
 
-  const costLabel = maxed
-    ? "Max Level"
-    : standing
-      ? `${next.label} · ${cost} coin`
-      : `${cost} coin`;
+  const costLabel = locked
+    ? `Needs ${getWallRequirementLabel()}`
+    : maxed
+      ? "Max Level"
+      : standing
+        ? `${next.label} · ${cost} coin`
+        : `${cost} coin`;
 
-  const ariaLabel = maxed
-    ? "Wall fully upgraded"
-    : standing
-      ? `Upgrade to ${next.label} for ${cost} coin`
-      : `Build wall for ${cost} coin`;
+  const ariaLabel = locked
+    ? `Upgrade your tent to a ${getWallRequirementLabel()} before building the wall`
+    : maxed
+      ? "Wall fully upgraded"
+      : standing
+        ? `Upgrade to ${next.label} for ${cost} coin`
+        : `Build wall for ${cost} coin`;
 
   return `
     <button
-      class="wall-build-button${maxed ? " is-built" : ""}${!maxed && !canAfford ? " is-broke" : ""}"
+      class="wall-build-button${maxed ? " is-built" : ""}${locked ? " is-locked" : ""}${!maxed && !locked && !canAfford ? " is-broke" : ""}"
       type="button"
       data-action="${standing ? "upgrade-wall" : "build-wall"}"
-      ${maxed ? "disabled" : ""}
+      ${maxed || locked ? "disabled" : ""}
       aria-label="${ariaLabel}"
     >
       <span class="wall-build-face">
@@ -6249,6 +6516,37 @@ function renderWallPanelButton() {
         <span class="wall-build-cost">${costLabel}</span>
       </span>
     </button>
+  `;
+}
+
+function renderHealingFirePanel() {
+  const rows = combat.units.map((unit) => {
+    const def = UNIT_DEF[unit.type];
+    const healing = Boolean(unit.healing);
+    const full = unit.health >= unit.maxHealth;
+
+    return `
+      <button
+        class="fire-unit-row${healing ? " is-healing" : ""}"
+        type="button"
+        data-action="send-unit-to-fire"
+        data-unit-id="${unit.id}"
+        aria-label="${healing ? `Send ${def.label} back to the road` : `Send ${def.label} to the fire to heal`}"
+      >
+        <span class="fire-unit-name">${def.label}</span>
+        <span class="fire-unit-health" data-unit-id="${unit.id}">${formatHp(unit.health)}/${unit.maxHealth} hp</span>
+        <span class="fire-unit-state" data-unit-id="${unit.id}">${healing ? "Resting" : full ? "Full" : "Send"}</span>
+      </button>
+    `;
+  }).join("");
+
+  return `
+    <div class="fire-panel" role="dialog" aria-label="Healing campfire">
+      <p class="fire-panel-kicker">Healing Campfire</p>
+      ${combat.units.length
+        ? `<div class="fire-panel-units">${rows}</div>`
+        : `<p class="fire-panel-empty">No troops trained yet.</p>`}
+    </div>
   `;
 }
 
@@ -6352,7 +6650,7 @@ function renderCamp() {
       ${watchtowerGroup()}
       ${ruinsGroup()}
       ${paddockGroup()}
-      ${quarryGroup()}
+      ${state.mine ? quarryGroup() : ""}
       ${farmGroup()}
       ${sheepFlock(486, 726, 0.62)}
       ${sheepFlock(1232, 700, 0.56)}
@@ -6367,6 +6665,11 @@ function renderCamp() {
       <g class="wall-click" transform="translate(${WALL_POSITION.x} ${WALL_POSITION.y})" data-action="select-wall">
         <rect class="wall-click-area" x="-86" y="-56" width="172" height="76" fill="transparent"/>
       </g>
+      ${state.healingFire ? `
+        <g class="healing-fire-click" transform="translate(${HEALING_FIRE_POSITION.x} ${HEALING_FIRE_POSITION.y})" data-action="select-healing-fire">
+          <rect class="healing-fire-click-area" x="-52" y="-32" width="104" height="48" fill="transparent"/>
+        </g>
+      ` : ""}
     </svg>
     <button class="tent-hit${state.tentUpgradeOpen ? " is-active" : ""}" type="button" data-action="select-tent" aria-label="Select tent" aria-pressed="${state.tentUpgradeOpen}"></button>
     <button class="crossbow-hit${state.crossbowPanelOpen ? " is-active" : ""}" type="button" data-action="select-crossbow" aria-label="Select crossbow" aria-pressed="${state.crossbowPanelOpen}"></button>
@@ -6430,21 +6733,21 @@ function renderCamp() {
           </span>
           <span class="camp-currency-value camp-currency-value-gem">${state.gems}</span>
         </div>
-        <div class="gem-shop-wrap">
+        <div class="shop-wrap">
           <button
-            class="gem-shop-button camp-hud-button${state.gemShopOpen ? " is-open" : ""}"
+            class="shop-button camp-hud-button${state.shopOpen ? " is-open" : ""}"
             type="button"
-            data-action="toggle-gem-shop"
-            aria-expanded="${state.gemShopOpen}"
+            data-action="toggle-shop"
+            aria-expanded="${state.shopOpen}"
             aria-haspopup="dialog"
             aria-label="Open shop"
           >
-            <span class="gem-shop-button-icon-wrap gem-shop-button-icon-wrap-coin">
-              <img class="gem-shop-button-icon" src="coin.png" alt="" width="20" height="20">
+            <span class="shop-button-icon-wrap">
+              <img class="shop-button-icon" src="coin.png" alt="" width="20" height="20">
             </span>
             Shop
           </button>
-          ${renderGemShopPanel()}
+          ${renderShopPanel()}
         </div>
         <button class="camp-hud-button" type="button" data-action="show-sign-in">Sign Out</button>
       </div>
@@ -6465,7 +6768,9 @@ function enterCastle(username, password, savedGame) {
   state.tentUpgradeOpen = false;
   state.crossbowPanelOpen = false;
   state.wallPanelOpen = false;
-  state.gemShopOpen = false;
+  state.healingFirePanelOpen = false;
+  state.shopOpen = false;
+  shopPausedGame = false;
   state.buildPanelSlot = null;
 
   if (savedGame) {
@@ -6531,6 +6836,7 @@ app.addEventListener("click", (event) => {
     state.crossbowPanelOpen = !state.crossbowPanelOpen;
     state.wallPanelOpen = false;
     state.tentUpgradeOpen = false;
+    state.healingFirePanelOpen = false;
     state.buildPanelSlot = null;
     syncCampPanels();
     return;
@@ -6542,8 +6848,28 @@ app.addEventListener("click", (event) => {
     state.wallPanelOpen = !state.wallPanelOpen;
     state.crossbowPanelOpen = false;
     state.tentUpgradeOpen = false;
+    state.healingFirePanelOpen = false;
     state.buildPanelSlot = null;
     syncCampPanels();
+    return;
+  }
+
+  if (actionTarget.dataset.action === "select-healing-fire") {
+    if (state.gameOver) return;
+    event.stopPropagation();
+    state.healingFirePanelOpen = !state.healingFirePanelOpen;
+    state.wallPanelOpen = false;
+    state.crossbowPanelOpen = false;
+    state.tentUpgradeOpen = false;
+    state.buildPanelSlot = null;
+    syncCampPanels();
+    return;
+  }
+
+  if (actionTarget.dataset.action === "send-unit-to-fire") {
+    if (state.gameOver || !state.healingFirePanelOpen) return;
+    event.stopPropagation();
+    sendUnitToHealingFire(Number(actionTarget.dataset.unitId));
     return;
   }
 
@@ -6556,6 +6882,7 @@ app.addEventListener("click", (event) => {
     state.crossbowPanelOpen = false;
     state.wallPanelOpen = false;
     state.tentUpgradeOpen = false;
+    state.healingFirePanelOpen = false;
     syncCampPanels();
     return;
   }
@@ -6643,6 +6970,7 @@ app.addEventListener("click", (event) => {
     state.tentUpgradeOpen = !state.tentUpgradeOpen;
     state.crossbowPanelOpen = false;
     state.wallPanelOpen = false;
+    state.healingFirePanelOpen = false;
     state.buildPanelSlot = null;
     render();
     if (state.screen === "camp" && !combat.loopRunning) {
@@ -6666,19 +6994,38 @@ app.addEventListener("click", (event) => {
     return;
   }
 
-  if (actionTarget.dataset.action === "toggle-gem-shop") {
+  if (actionTarget.dataset.action === "toggle-shop") {
     if (state.gameOver) return;
     event.stopPropagation();
-    state.gemShopOpen = !state.gemShopOpen;
-    refreshCombatHud();
+    setShopOpen(!state.shopOpen);
+    return;
+  }
+
+  if (actionTarget.dataset.action === "show-shop-tab") {
+    event.stopPropagation();
+    state.shopTab = actionTarget.dataset.shopTab;
     render();
     return;
   }
 
-  if (actionTarget.dataset.action === "trade-gems-for-coins") {
-    if (state.gameOver || !state.gemShopOpen) return;
+  if (actionTarget.dataset.action === "run-exchange") {
+    if (state.gameOver || !state.shopOpen) return;
     event.stopPropagation();
-    tradeGemsForCoins();
+    runExchange(actionTarget.dataset.offerId);
+    return;
+  }
+
+  if (actionTarget.dataset.action === "buy-healing-fire") {
+    if (state.gameOver || !state.shopOpen) return;
+    event.stopPropagation();
+    buyHealingFire();
+    return;
+  }
+
+  if (actionTarget.dataset.action === "buy-mine") {
+    if (state.gameOver || !state.shopOpen) return;
+    event.stopPropagation();
+    buyMine();
     return;
   }
 
@@ -6692,7 +7039,9 @@ app.addEventListener("click", (event) => {
     state.tentUpgradeOpen = false;
     state.crossbowPanelOpen = false;
     state.wallPanelOpen = false;
-    state.gemShopOpen = false;
+    state.healingFirePanelOpen = false;
+    state.shopOpen = false;
+    shopPausedGame = false;
     state.buildPanelSlot = null;
     state.error = "";
     state.success = "";
