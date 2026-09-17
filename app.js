@@ -1,5 +1,6 @@
 const app = document.querySelector("#app");
 const AUTO_SAVE_INTERVAL_MS = 10000;
+const LOCAL_BACKUP_KEY = "castleShields2Backup";
 
 const TENT_LEVELS = [
   { label: "Canvas Tent", kicker: "Main Tent", maxHealth: 3, defense: 0, population: 1, retaliation: 0, upgradeCost: 60 },
@@ -560,6 +561,61 @@ function signInRequest(username, password) {
   return postAccountRequest("/api/sign-in", { username, password });
 }
 
+function uploadSaveRequest(username, password, save) {
+  return postAccountRequest("/api/save", { username, password, save });
+}
+
+function readLocalBackup() {
+  try {
+    const raw = localStorage.getItem(LOCAL_BACKUP_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed.username === "string" && typeof parsed.password === "string" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeLocalBackup(username, password, save) {
+  try {
+    localStorage.setItem(LOCAL_BACKUP_KEY, JSON.stringify({ username, password, save }));
+  } catch {}
+}
+
+function backupMatches(backup, username, password) {
+  return Boolean(backup)
+    && backup.username.toLowerCase() === username.toLowerCase()
+    && backup.password === password;
+}
+
+async function restoreBackupToServer(backup) {
+  const account = await createAccountRequest(backup.username, backup.password);
+  if (!backup.save) return account;
+
+  await uploadSaveRequest(backup.username, backup.password, backup.save);
+  return { username: account.username, save: backup.save };
+}
+
+async function signInAccount(username, password) {
+  try {
+    return await signInRequest(username, password);
+  } catch (error) {
+    const backup = readLocalBackup();
+    if (!backupMatches(backup, username, password)) throw error;
+    return restoreBackupToServer(backup);
+  }
+}
+
+async function createAccount(username, password) {
+  const account = await createAccountRequest(username, password);
+  if (account.save) return account;
+
+  const backup = readLocalBackup();
+  if (!backupMatches(backup, username, password) || !backup.save) return account;
+
+  await uploadSaveRequest(username, password, backup.save);
+  return { username: account.username, save: backup.save };
+}
+
 function getCombatClock(now = performance.now()) {
   if (state.paused && combat.pauseStartedAt) {
     return combat.pauseStartedAt;
@@ -680,20 +736,22 @@ function applyGameSave(save) {
 function saveAccountProgress() {
   if (!state.username || !state.password || state.screen !== "camp") return Promise.resolve();
 
-  return postAccountRequest("/api/save", {
-    username: state.username,
-    password: state.password,
-    save: serializeGameSave()
-  }).catch(() => {});
+  const save = serializeGameSave();
+  writeLocalBackup(state.username, state.password, save);
+
+  return uploadSaveRequest(state.username, state.password, save).catch(() => {});
 }
 
 function flushAccountProgress() {
   if (!state.username || !state.password || state.screen !== "camp") return;
 
+  const save = serializeGameSave();
+  writeLocalBackup(state.username, state.password, save);
+
   const payload = JSON.stringify({
     username: state.username,
     password: state.password,
-    save: serializeGameSave()
+    save
   });
 
   if (navigator.sendBeacon) {
@@ -938,7 +996,7 @@ function renderSignIn() {
         </button>
         <div class="auth-divider"><span>New to the realm?</span></div>
         <button class="auth-button ghost" type="button" data-action="show-create-account">Create Account</button>
-        <p class="auth-save-hint">Your castle is saved on the server, so it follows you to any browser or device.</p>
+        <p class="auth-save-hint">Your castle saves on the server and keeps a copy in this browser, so it comes back even if the server restarts.</p>
       </form>
     </div>
   `);
@@ -6822,6 +6880,8 @@ function enterCastle(username, password, savedGame) {
     resetCombatState();
   }
 
+  writeLocalBackup(username, password, savedGame ?? null);
+
   render();
   startCombatLoop(Boolean(savedGame));
   startAutoSave();
@@ -7120,8 +7180,8 @@ app.addEventListener("submit", async (event) => {
 
   try {
     const account = form.dataset.form === "create-account"
-      ? await createAccountRequest(username, password)
-      : await signInRequest(username, password);
+      ? await createAccount(username, password)
+      : await signInAccount(username, password);
 
     enterCastle(account.username, password, account.save);
   } catch (error) {
