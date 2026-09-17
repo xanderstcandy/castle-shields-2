@@ -6870,8 +6870,13 @@ function renderCamp() {
             aria-haspopup="dialog"
             aria-label="Open shop"
           >
-            <span class="shop-button-icon-wrap">
-              <img class="shop-button-icon" src="coin.png" alt="" width="20" height="20">
+            <span class="shop-button-icons">
+              <span class="shop-button-icon-wrap">
+                <img class="shop-button-icon" src="coin.png" alt="" width="20" height="20">
+              </span>
+              <span class="shop-button-icon-wrap shop-button-icon-wrap-gem">
+                <img class="shop-button-icon" src="gem.png" alt="" width="20" height="20">
+              </span>
             </span>
             Shop
           </button>
