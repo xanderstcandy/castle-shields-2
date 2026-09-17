@@ -33,6 +33,95 @@ function writeAccounts(accounts) {
   fs.writeFileSync(accountsFile, JSON.stringify(accounts));
 }
 
+function fileStore() {
+  return {
+    label: "accounts.json",
+    async ready() {},
+    async find(usernameKey) {
+      const accounts = readAccounts();
+      return accounts.find((account) => account.username.toLowerCase() === usernameKey) || null;
+    },
+    async findByPassword(password) {
+      const accounts = readAccounts();
+      return accounts.find((account) => account.password === password) || null;
+    },
+    async put(username, password, save) {
+      const accounts = readAccounts();
+      const usernameKey = username.toLowerCase();
+      const index = accounts.findIndex((account) => account.username.toLowerCase() === usernameKey);
+
+      if (index === -1) {
+        accounts.push({ username, password, save });
+      } else {
+        accounts[index] = { username: accounts[index].username, password, save };
+      }
+
+      writeAccounts(accounts);
+    }
+  };
+}
+
+function postgresStore(client) {
+  const rowToAccount = (row) => (row ? { username: row.username, password: row.password, save: row.save ?? null } : null);
+
+  return {
+    label: "postgres",
+    async ready() {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS accounts (
+          username_key text PRIMARY KEY,
+          username text NOT NULL,
+          password text NOT NULL,
+          save jsonb
+        )
+      `);
+    },
+    async find(usernameKey) {
+      const result = await client.query("SELECT username, password, save FROM accounts WHERE username_key = $1", [usernameKey]);
+      return rowToAccount(result.rows[0]);
+    },
+    async findByPassword(password) {
+      const result = await client.query("SELECT username, password, save FROM accounts WHERE password = $1 LIMIT 1", [password]);
+      return rowToAccount(result.rows[0]);
+    },
+    async put(username, password, save) {
+      await client.query(
+        `INSERT INTO accounts (username_key, username, password, save)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (username_key) DO UPDATE SET password = EXCLUDED.password, save = EXCLUDED.save`,
+        [username.toLowerCase(), username, password, save === null ? null : JSON.stringify(save)]
+      );
+    }
+  };
+}
+
+function createStore() {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) return fileStore();
+
+  const { Pool } = require("pg");
+  const pool = new Pool({
+    connectionString: databaseUrl,
+    ssl: { rejectUnauthorized: false },
+    max: 4
+  });
+
+  return postgresStore(pool);
+}
+
+const store = createStore();
+let storeReadyPromise = null;
+
+function ensureStoreReady() {
+  if (!storeReadyPromise) {
+    storeReadyPromise = Promise.resolve(store.ready()).catch((error) => {
+      storeReadyPromise = null;
+      throw error;
+    });
+  }
+  return storeReadyPromise;
+}
+
 function sendJson(res, status, payload) {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
@@ -83,14 +172,15 @@ async function handleApi(req, res, urlPath) {
     return;
   }
 
-  const accounts = readAccounts();
-  const normalizedUsername = username.toLowerCase();
-  const index = accounts.findIndex((account) => account.username.toLowerCase() === normalizedUsername);
+  await ensureStoreReady();
+
+  const usernameKey = username.toLowerCase();
+  const existing = await store.find(usernameKey);
 
   if (urlPath === "/api/create-account") {
-    if (index !== -1) {
-      if (accounts[index].password === password) {
-        sendJson(res, 200, { username: accounts[index].username, save: accounts[index].save ?? null });
+    if (existing) {
+      if (existing.password === password) {
+        sendJson(res, 200, { username: existing.username, save: existing.save });
         return;
       }
       sendJson(res, 409, {
@@ -99,41 +189,38 @@ async function handleApi(req, res, urlPath) {
       return;
     }
 
-    if (accounts.some((account) => account.password === password)) {
+    if (await store.findByPassword(password)) {
       sendJson(res, 409, {
         error: "That password is already used by another account. Pick a different one."
       });
       return;
     }
 
-    accounts.push({ username, password, save: null });
-    writeAccounts(accounts);
+    await store.put(username, password, null);
     sendJson(res, 201, { username, save: null });
     return;
   }
 
   if (urlPath === "/api/sign-in") {
-    if (index === -1 || accounts[index].password !== password) {
+    if (!existing || existing.password !== password) {
       sendJson(res, 401, { error: "No account matches that username and password together." });
       return;
     }
-    sendJson(res, 200, { username: accounts[index].username, save: accounts[index].save ?? null });
+    sendJson(res, 200, { username: existing.username, save: existing.save });
     return;
   }
 
   if (urlPath === "/api/save") {
-    if (index === -1) {
-      accounts.push({ username, password, save: payload.save ?? null });
-      writeAccounts(accounts);
+    if (!existing) {
+      await store.put(username, password, payload.save ?? null);
       sendJson(res, 200, { saved: true });
       return;
     }
-    if (accounts[index].password !== password) {
+    if (existing.password !== password) {
       sendJson(res, 401, { error: "Sign in again to keep saving." });
       return;
     }
-    accounts[index] = { ...accounts[index], save: payload.save ?? null };
-    writeAccounts(accounts);
+    await store.put(existing.username, password, payload.save ?? null);
     sendJson(res, 200, { saved: true });
     return;
   }
@@ -189,5 +276,8 @@ http.createServer((req, res) => {
     res.end(data);
   });
 }).listen(port, "0.0.0.0", () => {
-  console.log(`Castle Shields 2 listening on http://localhost:${port}`);
+  console.log(`Castle Shields 2 listening on http://localhost:${port} (accounts in ${store.label})`);
+  ensureStoreReady().catch((error) => {
+    console.error("Account store is not reachable yet:", error.message);
+  });
 });
