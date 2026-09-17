@@ -37,6 +37,9 @@ const HEALING_FIRE_RANGE = 34;
 const MINE_POSITION = { x: 1084, y: 552 };
 const MINE_COST = 20;
 const MINE_MINT_MULTIPLIER = 1.5;
+const WINDMILL_POSITION = { x: 770, y: 214 };
+const WINDMILL_COST = 15;
+const WINDMILL_FARM_POP_BONUS = 2;
 const MIN_STRUCTURE_DAMAGE = 0.5;
 const WALL_BLOCK_RANGE = 48;
 const BUILD_SLOTS = [
@@ -482,6 +485,7 @@ const state = {
   healingFire: false,
   healingFirePanelOpen: false,
   mine: false,
+  windmill: false,
   buildings: [],
   buildPanelSlot: null,
   gameOver: false,
@@ -576,6 +580,7 @@ function serializeGameSave() {
     buildings: state.buildings.map((entry) => (entry ? { id: entry.id, level: entry.level } : null)),
     healingFire: state.healingFire,
     mine: state.mine,
+    windmill: state.windmill,
     gameOver: state.gameOver,
     paused: state.paused,
     combat: {
@@ -626,6 +631,7 @@ function applyGameSave(save) {
     : [];
   state.healingFire = Boolean(save.healingFire);
   state.mine = Boolean(save.mine);
+  state.windmill = Boolean(save.windmill);
   state.gameOver = Boolean(save.gameOver);
   state.paused = Boolean(save.paused);
   combat.pauseStartedAt = state.paused ? performance.now() : 0;
@@ -2749,8 +2755,11 @@ function villageGroup() {
 }
 
 function windmillGroup() {
+  return `<g class="windmill" transform="translate(${WINDMILL_POSITION.x} ${WINDMILL_POSITION.y}) scale(0.72)">${windmillArt()}</g>`;
+}
+
+function windmillArt() {
   return `
-    <g class="windmill" transform="translate(770 214) scale(0.72)">
       <ellipse class="prop-shadow" cx="10" cy="5" rx="56" ry="17"/>
       <path class="mill-tower" d="M -34 0 L -22 -96 H 22 L 34 0 Z"/>
       <path class="mill-band" d="M -29 -40 H 29 M -25 -68 H 25"/>
@@ -2772,7 +2781,6 @@ function windmillGroup() {
         <rect class="field-soil" x="-52" y="-30" width="104" height="32" rx="6"/>
         <path class="crop-row" d="M -46 -24 q 46 -6 92 0 M -46 -16 q 46 -6 92 0 M -46 -8 q 46 -6 92 0 M -46 0 q 46 -6 92 0"/>
       </g>
-    </g>
   `;
 }
 
@@ -4175,8 +4183,13 @@ function getTentDefense() {
   return getTentDef().defense;
 }
 
+function getFarmPopulation(farmLevels) {
+  const perLevel = FARM_POP_PER_LEVEL + (state.windmill ? WINDMILL_FARM_POP_BONUS : 0);
+  return farmLevels * perLevel;
+}
+
 function getTentPopulation() {
-  return getTentDef().population + getBuildingLevels("farm") * FARM_POP_PER_LEVEL;
+  return getTentDef().population + getFarmPopulation(getBuildingLevels("farm"));
 }
 
 function getTentRetaliation() {
@@ -4334,6 +4347,7 @@ function handleGameOver() {
   state.wall = null;
   state.healingFire = false;
   state.mine = false;
+  state.windmill = false;
   resetCombatState();
   combat.phaseEndsAt = performance.now() + WAVE_PEACE_MS;
   refreshCombatHud();
@@ -4602,6 +4616,16 @@ function buyMine() {
   return true;
 }
 
+function buyWindmill() {
+  if (state.gameOver || state.windmill || state.gems < WINDMILL_COST) return false;
+
+  state.gems -= WINDMILL_COST;
+  state.windmill = true;
+  refreshCombatHud();
+  render();
+  return true;
+}
+
 function renderLandCard(card) {
   const disabled = card.owned || state.gems < card.cost;
 
@@ -4642,6 +4666,15 @@ function renderLandSection() {
       action: "buy-mine",
       viewBox: "-118 -100 236 200",
       art: `<g transform="scale(0.9)">${quarryArt()}</g>`
+    },
+    {
+      label: "Windmill",
+      blurb: `Grinds your harvest · +${WINDMILL_FARM_POP_BONUS} population per farm level.`,
+      cost: WINDMILL_COST,
+      owned: state.windmill,
+      action: "buy-windmill",
+      viewBox: "-160 -185 320 200",
+      art: `<g transform="scale(0.92)">${windmillArt()}</g>`
     }
   ];
 
@@ -6369,7 +6402,7 @@ function getBuildingPerkText(building) {
     return `+${building.level} entertainment · keeps ${building.level * ENTERTAINMENT_TROOPS_PER_LEVEL} troops happy`;
   }
   if (building.id === "farm") {
-    return `+${building.level * FARM_POP_PER_LEVEL} population`;
+    return `+${getFarmPopulation(building.level)} population`;
   }
   if (building.id === "mint") {
     return `+${getMintPayout(building.level)} coin every 15 sec`;
@@ -6382,7 +6415,7 @@ function getBuildingNextPerkText(building) {
     return `+${building.level + 1} entertainment · keeps ${(building.level + 1) * ENTERTAINMENT_TROOPS_PER_LEVEL} troops happy`;
   }
   if (building.id === "farm") {
-    return `+${(building.level + 1) * FARM_POP_PER_LEVEL} population`;
+    return `+${getFarmPopulation(building.level + 1)} population`;
   }
   if (building.id === "mint") {
     return `+${getMintPayout(building.level + 1)} coin every 15 sec`;
@@ -6646,7 +6679,7 @@ function renderCamp() {
       ${riverCrossings()}
       ${signpost()}
       ${villageGroup()}
-      ${windmillGroup()}
+      ${state.windmill ? windmillGroup() : ""}
       ${watchtowerGroup()}
       ${ruinsGroup()}
       ${paddockGroup()}
@@ -7026,6 +7059,13 @@ app.addEventListener("click", (event) => {
     if (state.gameOver || !state.shopOpen) return;
     event.stopPropagation();
     buyMine();
+    return;
+  }
+
+  if (actionTarget.dataset.action === "buy-windmill") {
+    if (state.gameOver || !state.shopOpen) return;
+    event.stopPropagation();
+    buyWindmill();
     return;
   }
 
