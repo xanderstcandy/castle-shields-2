@@ -4581,6 +4581,17 @@ body:has(.camp-screen) {
   pointer-events: none;
 }
 
+.combat-elite-name {
+  fill: #bae6fd;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  paint-order: stroke;
+  stroke: rgba(3, 10, 22, 0.85);
+  stroke-width: 3px;
+  pointer-events: none;
+}
+
 .combat-enemy-boss .combat-enemy-figure {
   filter: drop-shadow(0 0 6px rgba(248, 113, 113, 0.5)) drop-shadow(0 5px 5px rgba(3, 12, 6, 0.45));
 }

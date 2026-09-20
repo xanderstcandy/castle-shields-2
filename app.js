@@ -408,6 +408,76 @@ const ENEMY_DEF = {
     coins: 18,
     gems: 3
   },
+  ironhide_juggernaut: {
+    label: "Ironhide Juggernaut",
+    health: 26,
+    damage: 2,
+    speed: 44,
+    height: 78,
+    barWidth: 42,
+    weight: 1.4,
+    debutWave: 25,
+    maxPerWave: 1,
+    isElite: true,
+    coins: 30,
+    gems: 4
+  },
+  obsidian_colossus: {
+    label: "Obsidian Colossus",
+    health: 50,
+    damage: 3,
+    speed: 40,
+    height: 86,
+    barWidth: 46,
+    weight: 1.4,
+    debutWave: 45,
+    maxPerWave: 1,
+    isElite: true,
+    coins: 55,
+    gems: 7
+  },
+  abyssal_behemoth: {
+    label: "Abyssal Behemoth",
+    health: 82,
+    damage: 3,
+    speed: 50,
+    height: 92,
+    barWidth: 50,
+    weight: 1.4,
+    debutWave: 65,
+    maxPerWave: 2,
+    isElite: true,
+    coins: 90,
+    gems: 11
+  },
+  voidplate_titan: {
+    label: "Voidplate Titan",
+    health: 120,
+    damage: 4,
+    speed: 54,
+    height: 98,
+    barWidth: 54,
+    weight: 1.4,
+    debutWave: 85,
+    maxPerWave: 2,
+    isElite: true,
+    coins: 140,
+    gems: 16
+  },
+  doomhorn_leviathan: {
+    label: "Doomhorn Leviathan",
+    health: 180,
+    damage: 5,
+    speed: 58,
+    height: 106,
+    barWidth: 60,
+    weight: 1.4,
+    debutWave: 110,
+    maxPerWave: 3,
+    isElite: true,
+    coins: 220,
+    gems: 26
+  },
   warlord: {
     label: "Warlord Gorrak",
     health: 60,
@@ -515,6 +585,7 @@ const combat = {
   waveNumber: 1,
   phaseEndsAt: 0,
   lastSpawnAt: 0,
+  eliteWaveCounts: {},
   mintAccumMs: 0,
   nextEnemyId: 1,
   nextBoltId: 1,
@@ -1316,6 +1387,57 @@ function sceneDefs() {
         <stop offset="0%" stop-color="#f0abfc"/>
         <stop offset="100%" stop-color="#581c87"/>
       </linearGradient>
+      <linearGradient id="juggerIron" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#cbd5e1"/>
+        <stop offset="55%" stop-color="#64748b"/>
+        <stop offset="100%" stop-color="#293548"/>
+      </linearGradient>
+      <linearGradient id="juggerHide" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#a8703c"/>
+        <stop offset="100%" stop-color="#432a12"/>
+      </linearGradient>
+      <linearGradient id="obsidianRock" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#55627a"/>
+        <stop offset="45%" stop-color="#1f2937"/>
+        <stop offset="100%" stop-color="#090f1c"/>
+      </linearGradient>
+      <linearGradient id="obsidianMagma" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#fde68a"/>
+        <stop offset="50%" stop-color="#f97316"/>
+        <stop offset="100%" stop-color="#b91c1c"/>
+      </linearGradient>
+      <linearGradient id="abyssHide" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#5eead4"/>
+        <stop offset="45%" stop-color="#0f766e"/>
+        <stop offset="100%" stop-color="#042f2e"/>
+      </linearGradient>
+      <linearGradient id="abyssShell" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#a5f3fc"/>
+        <stop offset="100%" stop-color="#155e75"/>
+      </linearGradient>
+      <linearGradient id="voidPlate" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="#c4b5fd"/>
+        <stop offset="45%" stop-color="#6d28d9"/>
+        <stop offset="100%" stop-color="#1b1745"/>
+      </linearGradient>
+      <linearGradient id="voidFlesh" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#4c1d95"/>
+        <stop offset="100%" stop-color="#0b0820"/>
+      </linearGradient>
+      <linearGradient id="doomHide" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#f87171"/>
+        <stop offset="45%" stop-color="#b91c1c"/>
+        <stop offset="100%" stop-color="#430a0a"/>
+      </linearGradient>
+      <linearGradient id="doomHorn" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#fef3c7"/>
+        <stop offset="100%" stop-color="#a16207"/>
+      </linearGradient>
+      <radialGradient id="eliteAura" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="rgba(56, 189, 248, 0.3)"/>
+        <stop offset="60%" stop-color="rgba(129, 140, 248, 0.12)"/>
+        <stop offset="100%" stop-color="rgba(129, 140, 248, 0)"/>
+      </radialGradient>
       <linearGradient id="bossPlate" x1="0" y1="0" x2="1" y2="1">
         <stop offset="0%" stop-color="#fde68a"/>
         <stop offset="48%" stop-color="#b45309"/>
@@ -3541,6 +3663,7 @@ function resetCombatState() {
   combat.waveNumber = 1;
   combat.phaseEndsAt = 0;
   combat.lastSpawnAt = 0;
+  combat.eliteWaveCounts = {};
   combat.mintAccumMs = 0;
   combat.nextEnemyId = 1;
   combat.nextBoltId = 1;
@@ -3612,6 +3735,7 @@ function startWaveCycle(now) {
   combat.phase = "peace";
   combat.phaseEndsAt = now + getWavePeaceMs();
   combat.lastSpawnAt = 0;
+  combat.eliteWaveCounts = {};
 }
 
 function getSpawnIntervalMs() {
@@ -3737,6 +3861,16 @@ function getEnemyWeight(def, waveNumber) {
   return def.weight;
 }
 
+function countEnemiesOfType(type) {
+  return combat.enemies.reduce((count, enemy) => (enemy.type === type ? count + 1 : count), 0);
+}
+
+function isEliteAvailable(type, def, waveNumber) {
+  if (waveNumber < def.debutWave) return false;
+  if ((combat.eliteWaveCounts[type] || 0) >= def.maxPerWave) return false;
+  return countEnemiesOfType(type) < def.maxPerWave;
+}
+
 function pickEnemyType(waveNumber) {
   if (waveNumber === 1) return "goblin";
 
@@ -3744,7 +3878,7 @@ function pickEnemyType(waveNumber) {
   const rosterWave =
     waveNumber + ENEMY_ROSTER_WAVE_BONUS + Math.floor(getLateGameSteps(waveNumber) / 2) - Math.round(ease * 1.5);
   const available = Object.entries(ENEMY_DEF)
-    .filter(([, def]) => rosterWave >= def.minWave)
+    .filter(([type, def]) => (def.isElite ? isEliteAvailable(type, def, waveNumber) : rosterWave >= def.minWave))
     .map(([type, def]) => [type, getEnemyWeight(def, rosterWave)]);
 
   const totalWeight = available.reduce((sum, [, weight]) => sum + weight, 0);
@@ -3768,6 +3902,11 @@ function spawnEnemy() {
   const early = getEarlyGameEnemyScale();
 
   const health = Math.max(1, Math.round(def.health * scale.health * early.health));
+
+  if (def.isElite) {
+    combat.eliteWaveCounts[type] = (combat.eliteWaveCounts[type] || 0) + 1;
+  }
+
   combat.enemies.push({
     id: combat.nextEnemyId++,
     type,
@@ -3779,6 +3918,7 @@ function spawnEnemy() {
     speed: def.speed * scale.speed * early.speed,
     facing: lane[1].x >= start.x ? 1 : -1,
     lastAttackAt: 0,
+    isElite: Boolean(def.isElite),
     coinReward: def.coins,
     gemReward: def.gems,
     x: start.x,
@@ -5987,6 +6127,319 @@ function elderWyrmSprite(swing, strike) {
   `;
 }
 
+function ironhideJuggernautSprite(swing, strike) {
+  const legSwing = swing * 6;
+  const armSwing = swing * 5;
+  const slam = strike * 40;
+  const furnace = (0.55 + Math.abs(swing) * 0.35).toFixed(2);
+
+  return `
+    <ellipse cx="0" cy="2" rx="25" ry="6.2" fill="rgba(5, 16, 8, 0.36)"/>
+    <g transform="rotate(${legSwing} 11 -26)">
+      <path d="M 4 -30 h 15 l 2 18 -2 12 h -15 Z" fill="url(#juggerHide)"/>
+      <path d="M 4 -23 h 15 v 7 h -15 Z" fill="url(#juggerIron)"/>
+      <path d="M 2 -3 h 20 a 2.4 2.4 0 0 1 2.4 2.4 v 3 h -24.8 Z" fill="#1c2534"/>
+    </g>
+    <g transform="rotate(${-legSwing} -11 -26)">
+      <path d="M -19 -30 h 15 l -2 18 2 12 h -15 Z" fill="#8a5b30"/>
+      <path d="M -19 -23 h 15 v 7 h -15 Z" fill="#54637a"/>
+      <path d="M -22.4 -3 h 20 v 5.4 h -22.4 a 2.4 2.4 0 0 1 2.4 -5.4 Z" fill="#141c29"/>
+    </g>
+    <g transform="rotate(${armSwing} -22 -52)">
+      <path d="M -28 -54 h 11 v 26 a 5.5 5.5 0 0 1 -11 0 Z" fill="#8a5b30"/>
+      <path d="M -29 -30 a 6 6 0 0 0 13 0 v -4 h -13 Z" fill="url(#juggerIron)"/>
+      <path d="M -27 -44 h 9 v 5 h -9 Z" fill="#54637a"/>
+    </g>
+    <path d="M -21 -60 q 21 -10 42 0 l 5 34 q -26 8 -52 0 Z" fill="url(#juggerHide)"/>
+    <path d="M -18 -58 q 18 -8 36 0 l 3 20 q -21 7 -42 0 Z" fill="url(#juggerIron)"/>
+    <path d="M -17.4 -57.4 q 17.4 -7 34.8 0 l 0.8 6 q -18 -5.4 -36.4 0 Z" fill="#e2e8f0" opacity="0.4"/>
+    <path d="M -12 -46 h 7 v 9 h -7 Z M 5 -46 h 7 v 9 h -7 Z" fill="#f97316" opacity="${furnace}"/>
+    <path d="M -12 -46 h 7 v 9 h -7 Z M 5 -46 h 7 v 9 h -7 Z" fill="none" stroke="#3b2a14" stroke-width="1"/>
+    <path d="M -14 -33 q 14 6 28 0 l -2 6 q -12 5 -24 0 Z" fill="#3a2a16"/>
+    <path d="M -22 -62 q 12 -9 24 -3 q -12 1 -22 6 Z" fill="#9aa8bc"/>
+    <path d="M -26 -60 a 13 9 0 0 1 20 -5 l 2 8 q -12 3 -22 1 Z" fill="url(#juggerIron)" stroke="#3f4a5c" stroke-width="1"/>
+    <path d="M 26 -60 a 13 9 0 0 0 -20 -5 l -2 8 q 12 3 22 1 Z" fill="url(#juggerIron)" stroke="#3f4a5c" stroke-width="1"/>
+    <path d="M -24 -63 l -5 -6 6 1 Z M 24 -63 l 5 -6 -6 1 Z" fill="#cbd5e1"/>
+    <path d="M -7 -66 h 14 v 8 h -14 Z" fill="#7a5028"/>
+    <path d="M -11 -78 q 11 -6 22 0 l 1 12 q -12 5 -24 0 Z" fill="url(#juggerIron)"/>
+    <path d="M -10.4 -77.4 q 10.4 -5 20.8 0 l 0.4 3.6 q -11 -4 -21.6 0 Z" fill="#e2e8f0" opacity="0.45"/>
+    <path d="M -8 -70 h 16 v 3.4 h -16 Z" fill="#111827"/>
+    <path d="M -6 -69.4 h 3 v 2.2 h -3 Z M 3 -69.4 h 3 v 2.2 h -3 Z" fill="#fb923c" opacity="0.95"/>
+    <path d="M -11 -74 l -6 2 6 3 Z M 11 -74 l 6 2 -6 3 Z" fill="#94a3b8"/>
+    <path d="M 0 -80 v -5" fill="none" stroke="#64748b" stroke-width="2.4"/>
+    <path d="M 0 -85 l 5 3 -5 3 -5 -3 Z" fill="#f97316" opacity="${furnace}"/>
+    <g transform="rotate(${slam - armSwing} 22 -52)">
+      <path d="M 17 -54 h 11 v 26 a 5.5 5.5 0 0 1 -11 0 Z" fill="url(#juggerHide)"/>
+      <path d="M 16 -30 a 6 6 0 0 0 13 0 v -4 h -13 Z" fill="url(#juggerIron)"/>
+      <path d="M 18 -44 h 9 v 5 h -9 Z" fill="#7c8a9e"/>
+      <g transform="rotate(-16 30 -32)">
+        <rect x="28" y="-44" width="4.6" height="44" rx="2.2" fill="url(#woodFill)"/>
+        <path d="M 26 -50 h 17 a 3.6 3.6 0 0 1 3.6 3.6 v 10.4 a 3.6 3.6 0 0 1 -3.6 3.6 h -17 a 3.6 3.6 0 0 1 -3.6 -3.6 v -10.4 a 3.6 3.6 0 0 1 3.6 -3.6 Z" fill="url(#juggerIron)" stroke="#3f4a5c" stroke-width="1.1"/>
+        <path d="M 26 -48 h 17 v 3.6 h -17 Z" fill="#e2e8f0" opacity="0.35"/>
+        <path d="M 28.6 -40 h 4.6 v 4.6 h -4.6 Z M 36.4 -40 h 4.6 v 4.6 h -4.6 Z" fill="#f97316" opacity="${furnace}"/>
+      </g>
+    </g>
+  `;
+}
+
+function obsidianColossusSprite(swing, strike) {
+  const legSwing = swing * 5;
+  const armSwing = swing * 6;
+  const smash = strike * 38;
+  const magma = (0.6 + Math.abs(swing) * 0.3).toFixed(2);
+  const vent = strike > 0.35 ? 1 : 0;
+
+  return `
+    <ellipse cx="0" cy="2" rx="27" ry="6.6" fill="rgba(5, 16, 8, 0.38)"/>
+    <g transform="rotate(${legSwing} 12 -28)">
+      <path d="M 4 -32 h 17 l 3 20 -3 14 h -17 Z" fill="url(#obsidianRock)"/>
+      <path d="M 7 -26 l 9 8 -6 6" fill="none" stroke="url(#obsidianMagma)" stroke-width="2.2" opacity="${magma}"/>
+      <path d="M 1 -3 h 23 a 3 3 0 0 1 3 3 v 3.4 h -26 Z" fill="#070d18"/>
+    </g>
+    <g transform="rotate(${-legSwing} -12 -28)">
+      <path d="M -21 -32 h 17 l -3 20 3 14 h -17 Z" fill="#161f2e"/>
+      <path d="M -17 -26 l -8 9 6 6" fill="none" stroke="url(#obsidianMagma)" stroke-width="2" opacity="${magma}"/>
+      <path d="M -27 -3 h 23 v 6.4 h -26 a 3 3 0 0 1 3 -6.4 Z" fill="#050a13"/>
+    </g>
+    <g transform="rotate(${armSwing} -24 -56)">
+      <path d="M -31 -58 h 12 v 28 a 6 6 0 0 1 -12 0 Z" fill="#161f2e"/>
+      <path d="M -32 -32 a 7 7 0 0 0 14 0 v -5 h -14 Z" fill="url(#obsidianRock)"/>
+      <path d="M -28 -50 l 4 8 -4 7" fill="none" stroke="url(#obsidianMagma)" stroke-width="2" opacity="${magma}"/>
+    </g>
+    <path d="M -23 -66 q 23 -11 46 0 l 5 38 q -28 9 -56 0 Z" fill="url(#obsidianRock)"/>
+    <path d="M -22 -65 q 22 -9 44 0 l 1 7 q -23 -7 -46 0 Z" fill="#6b7a94" opacity="0.4"/>
+    <path d="M -14 -60 l 6 14 -8 10 6 12" fill="none" stroke="url(#obsidianMagma)" stroke-width="3" opacity="${magma}" stroke-linecap="round"/>
+    <path d="M 13 -60 l -5 16 8 9 -5 11" fill="none" stroke="url(#obsidianMagma)" stroke-width="2.6" opacity="${magma}" stroke-linecap="round"/>
+    <path d="M -4 -52 q 10 8 2 18" fill="none" stroke="#fbbf24" stroke-width="2" opacity="${magma}"/>
+    <path d="M -28 -66 l -8 -14 14 4 Z M 28 -66 l 8 -14 -14 4 Z" fill="#1f2937"/>
+    <path d="M -27 -68 a 14 10 0 0 1 22 -5 l 2 9 q -13 3 -24 1 Z" fill="url(#obsidianRock)" stroke="#0b1120" stroke-width="1.2"/>
+    <path d="M 27 -68 a 14 10 0 0 0 -22 -5 l -2 9 q 13 3 24 1 Z" fill="url(#obsidianRock)" stroke="#0b1120" stroke-width="1.2"/>
+    <path d="M -24 -72 l -4 -9 8 4 Z M -14 -74 l -2 -10 7 6 Z M 24 -72 l 4 -9 -8 4 Z M 14 -74 l 2 -10 -7 6 Z" fill="#334155"/>
+    <path d="M -8 -72 h 16 v 8 h -16 Z" fill="#131c2b"/>
+    <path d="M -13 -86 q 13 -8 26 0 l 1 14 q -14 6 -28 0 Z" fill="url(#obsidianRock)"/>
+    <path d="M -12 -85 q 12 -6 24 0 l 0.6 4 q -12.6 -5 -25.2 0 Z" fill="#6b7a94" opacity="0.4"/>
+    <path d="M -13 -84 l -9 -8 10 0 Z M 13 -84 l 9 -8 -10 0 Z" fill="#475569"/>
+    <path d="M -7 -79 h 5.6 v 4 h -5.6 Z M 1.4 -79 h 5.6 v 4 h -5.6 Z" fill="url(#obsidianMagma)" opacity="0.95"/>
+    <path d="M -8 -71 q 8 5 16 0 l -2 4 q -6 3 -12 0 Z" fill="#050a13"/>
+    <path d="M -5 -71.4 v 3.4 M 0 -70.6 v 3.6 M 5 -71.4 v 3.4" fill="none" stroke="url(#obsidianMagma)" stroke-width="1.2" opacity="${magma}"/>
+    ${vent ? `<path d="M -15 -90 q -4 -6 1 -9 M 15 -90 q 4 -6 -1 -9" fill="none" stroke="#fb923c" stroke-width="2" opacity="0.32" stroke-linecap="round"/>` : ""}
+    <g transform="rotate(${smash - armSwing} 24 -56)">
+      <path d="M 19 -58 h 12 v 28 a 6 6 0 0 1 -12 0 Z" fill="url(#obsidianRock)"/>
+      <path d="M 18 -32 a 7 7 0 0 0 14 0 v -5 h -14 Z" fill="#46536b"/>
+      <path d="M 24 -50 l 5 9 -5 7" fill="none" stroke="url(#obsidianMagma)" stroke-width="2" opacity="${magma}"/>
+      <g transform="rotate(-18 25 -36)">
+        <path d="M 16 -44 l 18 -6 10 12 -8 14 -18 2 -6 -12 Z" fill="url(#obsidianRock)" stroke="#070d18" stroke-width="1.4"/>
+        <path d="M 22 -40 l 10 -2 4 7 -6 8 -9 1 Z" fill="url(#obsidianMagma)" opacity="${magma}"/>
+      </g>
+    </g>
+  `;
+}
+
+function abyssalBehemothSprite(swing, strike) {
+  const legSwing = swing * 6;
+  const armSwing = swing * 7;
+  const lunge = strike * 36;
+  const glow = (0.55 + Math.abs(swing) * 0.35).toFixed(2);
+  const tentacle = swing * 9;
+  const roar = strike > 0.4 ? 1 : 0;
+
+  return `
+    <ellipse cx="0" cy="2" rx="28" ry="6.8" fill="rgba(5, 16, 8, 0.38)"/>
+    <g transform="rotate(${tentacle} -22 -30)">
+      <path d="M -24 -34 q -16 8 -14 22 q 6 -10 16 -12 Z" fill="#0f766e" opacity="0.9"/>
+      <circle cx="-32" cy="-16" r="2.2" fill="#5eead4" opacity="${glow}"/>
+    </g>
+    <g transform="rotate(${-tentacle} 22 -30)">
+      <path d="M 24 -34 q 16 8 14 22 q -6 -10 -16 -12 Z" fill="#0f766e" opacity="0.9"/>
+      <circle cx="32" cy="-16" r="2.2" fill="#5eead4" opacity="${glow}"/>
+    </g>
+    <g transform="rotate(${legSwing} 12 -28)">
+      <path d="M 4 -32 h 16 l 3 20 -2 14 h -17 Z" fill="url(#abyssHide)"/>
+      <path d="M 0 -1 q 12 -6 24 0 l 2 4 h -28 Z" fill="#022c26"/>
+      <path d="M 2 0 l 3 -5 M 9 0 l 2 -5 M 16 0 l 2 -5" fill="none" stroke="#99f6e4" stroke-width="1.6" stroke-linecap="round"/>
+    </g>
+    <g transform="rotate(${-legSwing} -12 -28)">
+      <path d="M -20 -32 h 16 l -2 20 3 14 h -17 Z" fill="#0b5f58"/>
+      <path d="M -26 -1 q 12 -6 24 0 l 2 4 h -28 Z" fill="#021f1b"/>
+      <path d="M -24 0 l 3 -5 M -17 0 l 2 -5 M -10 0 l 2 -5" fill="none" stroke="#99f6e4" stroke-width="1.6" stroke-linecap="round"/>
+    </g>
+    <g transform="rotate(${armSwing} -25 -58)">
+      <path d="M -32 -60 h 12 v 30 a 6 6 0 0 1 -12 0 Z" fill="#0b5f58"/>
+      <path d="M -34 -32 q 7 -6 15 0 l -2 10 q -5 4 -11 0 Z" fill="url(#abyssHide)"/>
+      <path d="M -33 -24 l -4 8 M -27 -22 l -2 9 M -21 -24 l 2 8" fill="none" stroke="#99f6e4" stroke-width="2" stroke-linecap="round"/>
+    </g>
+    <path d="M -24 -70 q 24 -12 48 0 l 5 40 q -29 10 -58 0 Z" fill="url(#abyssHide)"/>
+    <path d="M -22 -68 q 22 -9 44 0 l 1 8 q -23 -8 -46 0 Z" fill="#7dd3c8" opacity="0.35"/>
+    <path d="M -16 -60 q 16 7 32 0 M -18 -50 q 18 7 36 0 M -16 -40 q 16 6 32 0" fill="none" stroke="#042f2e" stroke-width="2" opacity="0.45"/>
+    <circle cx="-9" cy="-54" r="3.4" fill="#5eead4" opacity="${glow}"/>
+    <circle cx="8" cy="-49" r="3" fill="#5eead4" opacity="${glow}"/>
+    <circle cx="-4" cy="-38" r="2.6" fill="#5eead4" opacity="${glow}"/>
+    <path d="M -26 -70 q -10 -12 0 -20 q 6 10 6 18 Z M 26 -70 q 10 -12 0 -20 q -6 10 -6 18 Z" fill="url(#abyssShell)" stroke="#0e5c6b" stroke-width="1"/>
+    <path d="M -28 -68 a 14 10 0 0 1 22 -6 l 2 10 q -13 3 -24 1 Z" fill="url(#abyssShell)" stroke="#0e5c6b" stroke-width="1.2"/>
+    <path d="M 28 -68 a 14 10 0 0 0 -22 -6 l -2 10 q 13 3 24 1 Z" fill="url(#abyssShell)" stroke="#0e5c6b" stroke-width="1.2"/>
+    <path d="M -8 -76 h 16 v 8 h -16 Z" fill="#0b5f58"/>
+    <path d="M -14 -92 q 14 -9 28 0 l 2 14 q -16 7 -32 0 Z" fill="url(#abyssHide)"/>
+    <path d="M -13 -91 q 13 -7 26 0 l 0.6 4 q -13.6 -6 -27.2 0 Z" fill="#7dd3c8" opacity="0.4"/>
+    <path d="M -14 -90 q -12 -6 -14 -16 q 12 2 17 10 Z M 14 -90 q 12 -6 14 -16 q -12 2 -17 10 Z" fill="url(#abyssShell)" stroke="#0e5c6b" stroke-width="0.9"/>
+    <ellipse cx="-6.4" cy="-84" rx="3.4" ry="2.8" fill="#ecfeff"/>
+    <ellipse cx="6.4" cy="-84" rx="3.4" ry="2.8" fill="#ecfeff"/>
+    <circle cx="-6" cy="-84" r="1.5" fill="#042f2e"/>
+    <circle cx="6.8" cy="-84" r="1.5" fill="#042f2e"/>
+    <circle cx="0" cy="-90" r="2.2" fill="#5eead4" opacity="${glow}"/>
+    <path d="M -10 -77 q 10 6 20 0 l -2 5 q -8 4 -16 0 Z" fill="#021f1b"/>
+    <path d="M -7 -77.6 l 1.6 5 M -2.4 -76.6 l 1 5.4 M 2.4 -76.6 l -1 5.4 M 7 -77.6 l -1.6 5" fill="none" stroke="#ecfeff" stroke-width="1.5"/>
+    ${roar ? `<path d="M 16 -82 q 14 -6 24 2 q -14 8 -24 -2 Z" fill="#5eead4" opacity="0.4"/>` : ""}
+    <g transform="rotate(${lunge - armSwing} 25 -58)">
+      <path d="M 20 -60 h 12 v 30 a 6 6 0 0 1 -12 0 Z" fill="url(#abyssHide)"/>
+      <path d="M 19 -32 q 7 -6 15 0 l -2 10 q -5 4 -11 0 Z" fill="#0b5f58"/>
+      <path d="M 20 -24 l -4 10 M 26 -22 l -1 11 M 32 -24 l 3 10" fill="none" stroke="#99f6e4" stroke-width="2.2" stroke-linecap="round"/>
+    </g>
+  `;
+}
+
+function voidplateTitanSprite(swing, strike) {
+  const legSwing = swing * 5;
+  const armSwing = swing * 6;
+  const cleave = strike * 40;
+  const rift = (0.55 + Math.abs(swing) * 0.4).toFixed(2);
+  const float = (swing * 1.6).toFixed(2);
+
+  return `
+    <ellipse cx="0" cy="2" rx="29" ry="7" fill="rgba(5, 16, 8, 0.4)"/>
+    <g transform="rotate(${legSwing} 13 -30)">
+      <path d="M 4 -34 h 18 l 3 22 -3 14 h -18 Z" fill="url(#voidFlesh)"/>
+      <path d="M 5 -28 h 16 v 9 h -16 Z" fill="url(#voidPlate)"/>
+      <path d="M 1 -3 h 24 a 3 3 0 0 1 3 3 v 3.6 h -27 Z" fill="#0b0820"/>
+    </g>
+    <g transform="rotate(${-legSwing} -13 -30)">
+      <path d="M -22 -34 h 18 l -3 22 3 14 h -18 Z" fill="#170f38"/>
+      <path d="M -21 -28 h 16 v 9 h -16 Z" fill="#4c2fa8"/>
+      <path d="M -28 -3 h 24 v 6.6 h -27 a 3 3 0 0 1 3 -6.6 Z" fill="#070518"/>
+    </g>
+    <g transform="rotate(${armSwing} -26 -60)">
+      <path d="M -33 -62 h 12 v 30 a 6 6 0 0 1 -12 0 Z" fill="#170f38"/>
+      <path d="M -34 -34 a 7 7 0 0 0 14 0 v -5 h -14 Z" fill="url(#voidPlate)"/>
+      <path d="M -31 -54 h 9 v 6 h -9 Z" fill="#6d28d9"/>
+    </g>
+    <path d="M -25 -74 q 25 -12 50 0 l 5 42 q -30 10 -60 0 Z" fill="url(#voidFlesh)"/>
+    <path d="M -21 -72 q 21 -10 42 0 l 4 26 q -25 8 -50 0 Z" fill="url(#voidPlate)"/>
+    <path d="M -20 -71 q 20 -8 40 0 l 1 7 q -21 -7 -42 0 Z" fill="#ddd6fe" opacity="0.4"/>
+    <circle cx="-8" cy="-58" r="1.5" fill="#ede9fe"/>
+    <circle cx="6" cy="-62" r="1.2" fill="#ede9fe"/>
+    <circle cx="10" cy="-52" r="1.4" fill="#ede9fe"/>
+    <circle cx="-12" cy="-48" r="1.2" fill="#ede9fe"/>
+    <circle cx="2" cy="-46" r="1.6" fill="#ede9fe"/>
+    <path d="M 0 -68 q 9 12 0 24 q -9 -12 0 -24 Z" fill="#a78bfa" opacity="${rift}"/>
+    <path d="M 0 -64 q 4 8 0 16 q -4 -8 0 -16 Z" fill="#f5f3ff" opacity="${rift}"/>
+    <path d="M -17 -36 q 17 7 34 0 l -3 7 q -14 5 -28 0 Z" fill="#0b0820"/>
+    <path d="M -30 -74 a 15 11 0 0 1 24 -6 l 2 11 q -14 3 -26 1 Z" fill="url(#voidPlate)" stroke="#1b1745" stroke-width="1.2"/>
+    <path d="M 30 -74 a 15 11 0 0 0 -24 -6 l -2 11 q 14 3 26 1 Z" fill="url(#voidPlate)" stroke="#1b1745" stroke-width="1.2"/>
+    <path d="M -27 -78 l -3 -10 8 5 Z M 27 -78 l 3 -10 -8 5 Z" fill="#8b5cf6"/>
+    <g transform="translate(0 ${float})">
+      <path d="M -38 -66 l 7 -5 5 7 -6 6 Z" fill="url(#voidPlate)" opacity="0.85"/>
+      <path d="M 38 -66 l -7 -5 -5 7 6 6 Z" fill="url(#voidPlate)" opacity="0.85"/>
+      <path d="M -34 -46 l 5 -4 4 6 -5 4 Z" fill="#6d28d9" opacity="0.7"/>
+      <path d="M 34 -46 l -5 -4 -4 6 5 4 Z" fill="#6d28d9" opacity="0.7"/>
+    </g>
+    <path d="M -8 -80 h 16 v 8 h -16 Z" fill="#170f38"/>
+    <path d="M -14 -98 q 14 -9 28 0 l 2 16 q -16 7 -32 0 Z" fill="url(#voidPlate)"/>
+    <path d="M -13 -97 q 13 -7 26 0 l 0.6 4.4 q -13.6 -6 -27.2 0 Z" fill="#ddd6fe" opacity="0.45"/>
+    <path d="M -14 -96 l -10 -14 13 5 Z M 14 -96 l 10 -14 -13 5 Z" fill="url(#voidPlate)" stroke="#1b1745" stroke-width="1"/>
+    <path d="M -11 -88 h 22 v 4.4 h -22 Z" fill="#070518"/>
+    <path d="M -7.6 -87.4 h 4.4 v 3.2 h -4.4 Z M 3.2 -87.4 h 4.4 v 3.2 h -4.4 Z" fill="#c4b5fd" opacity="${rift}"/>
+    <path d="M 0 -100 v -7" fill="none" stroke="#6d28d9" stroke-width="2.6"/>
+    <path d="M 0 -107 l 6 4 -6 5 -6 -5 Z" fill="#c4b5fd" opacity="${rift}"/>
+    <g transform="rotate(${cleave - armSwing} 26 -60)">
+      <path d="M 21 -62 h 12 v 30 a 6 6 0 0 1 -12 0 Z" fill="url(#voidFlesh)"/>
+      <path d="M 20 -34 a 7 7 0 0 0 14 0 v -5 h -14 Z" fill="url(#voidPlate)"/>
+      <path d="M 22 -54 h 9 v 6 h -9 Z" fill="#8b5cf6"/>
+      <g transform="rotate(-20 27 -38)">
+        <rect x="25" y="-46" width="4.4" height="34" rx="2" fill="#1b1745"/>
+        <path d="M 27 -50 l 16 -22 4 8 -12 20 Z" fill="url(#voidPlate)" stroke="#1b1745" stroke-width="1.2"/>
+        <path d="M 28 -50 l 14 -19 1.6 3.4 -11 17 Z" fill="#ede9fe" opacity="0.45"/>
+        <path d="M 20 -48 h 16 v 5 h -16 Z" fill="#4c2fa8"/>
+      </g>
+    </g>
+  `;
+}
+
+function doomhornLeviathanSprite(swing, strike) {
+  const legSwing = swing * 6;
+  const armSwing = swing * 7;
+  const cleave = strike * 38;
+  const ember = (0.6 + Math.abs(swing) * 0.35).toFixed(2);
+  const wing = swing * 5;
+  const breathe = strike > 0.35 ? 1 : 0;
+
+  return `
+    <ellipse cx="0" cy="2" rx="31" ry="7.4" fill="rgba(5, 16, 8, 0.42)"/>
+    <g transform="rotate(${wing} -26 -76)">
+      <path d="M -26 -78 q -30 -18 -44 -4 q 12 4 14 12 q 10 -6 18 2 q 4 -8 12 -10 Z" fill="#7f1d1d" stroke="#450a0a" stroke-width="1.2"/>
+      <path d="M -34 -78 q -14 -4 -22 4 M -30 -72 q -12 0 -18 8" fill="none" stroke="#450a0a" stroke-width="1.4" opacity="0.7"/>
+    </g>
+    <g transform="rotate(${-wing} 26 -76)">
+      <path d="M 26 -78 q 30 -18 44 -4 q -12 4 -14 12 q -10 -6 -18 2 q -4 -8 -12 -10 Z" fill="#991b1b" stroke="#450a0a" stroke-width="1.2"/>
+      <path d="M 34 -78 q 14 -4 22 4 M 30 -72 q 12 0 18 8" fill="none" stroke="#450a0a" stroke-width="1.4" opacity="0.7"/>
+    </g>
+    <path d="M -30 -34 q -24 10 -22 30 q 10 -14 24 -16 Z" fill="url(#doomHide)" stroke="#450a0a" stroke-width="1"/>
+    <path d="M -48 -8 l -8 4 6 5 Z" fill="url(#doomHorn)"/>
+    <g transform="rotate(${legSwing} 14 -32)">
+      <path d="M 4 -36 h 19 l 3 24 -3 15 h -19 Z" fill="url(#doomHide)"/>
+      <path d="M 6 -30 h 16 v 9 h -16 Z" fill="#7f1d1d"/>
+      <path d="M 0 -1 q 13 -6 26 0 l 2 4.4 h -30 Z" fill="#2c0707"/>
+      <path d="M 4 0.6 l 2 -4 M 12 0.6 l 1.4 -4 M 20 0.6 l 2 -4" fill="none" stroke="url(#doomHorn)" stroke-width="1.7" stroke-linecap="round"/>
+    </g>
+    <g transform="rotate(${-legSwing} -14 -32)">
+      <path d="M -23 -36 h 19 l -3 24 3 15 h -19 Z" fill="#8f1616"/>
+      <path d="M -22 -30 h 16 v 9 h -16 Z" fill="#611010"/>
+      <path d="M -28 -1 q 13 -6 26 0 l 2 4.4 h -30 Z" fill="#1f0505"/>
+      <path d="M -24 0.6 l 2 -4 M -16 0.6 l 1.4 -4 M -8 0.6 l 2 -4" fill="none" stroke="#d9a53a" stroke-width="1.7" stroke-linecap="round"/>
+    </g>
+    <g transform="rotate(${armSwing} -28 -64)">
+      <path d="M -35 -66 h 13 v 32 a 6.5 6.5 0 0 1 -13 0 Z" fill="#8f1616"/>
+      <path d="M -37 -36 q 8 -6 17 0 l -2 11 q -6 4 -13 0 Z" fill="url(#doomHide)"/>
+      <path d="M -35 -26 l -3 7 M -29 -24 l -1 7.6 M -23 -26 l 2 7" fill="none" stroke="url(#doomHorn)" stroke-width="2" stroke-linecap="round"/>
+    </g>
+    <path d="M -26 -80 q 26 -13 52 0 l 6 46 q -32 11 -64 0 Z" fill="url(#doomHide)"/>
+    <path d="M -22 -78 q 22 -10 44 0 l 4 12 q -26 -9 -52 0 Z" fill="#fca5a5" opacity="0.35"/>
+    <path d="M -19 -62 q 19 8 38 0 M -21 -52 q 21 8 42 0 M -19 -42 q 19 7 38 0" fill="none" stroke="#450a0a" stroke-width="2.2" opacity="0.5"/>
+    <path d="M -13 -66 h 26 l -3 20 -10 6 -10 -6 Z" fill="#2c0707"/>
+    <path d="M -9 -62 h 18 l -2 14 -7 4 -7 -4 Z" fill="url(#obsidianMagma)" opacity="${ember}"/>
+    <path d="M 0 -60 v 14" fill="none" stroke="#fde68a" stroke-width="1.6" opacity="${ember}"/>
+    <path d="M -18 -38 q 18 8 36 0 l -3 8 q -15 6 -30 0 Z" fill="#2c0707"/>
+    <path d="M -31 -80 a 16 12 0 0 1 25 -7 l 2 12 q -15 3 -27 1 Z" fill="#7f1d1d" stroke="#450a0a" stroke-width="1.2"/>
+    <path d="M 31 -80 a 16 12 0 0 0 -25 -7 l -2 12 q 15 3 27 1 Z" fill="#991b1b" stroke="#450a0a" stroke-width="1.2"/>
+    <path d="M -30 -84 l -5 -12 11 5 Z M -18 -88 l -2 -12 8 7 Z M 30 -84 l 5 -12 -11 5 Z M 18 -88 l 2 -12 -8 7 Z" fill="url(#doomHorn)"/>
+    <path d="M -9 -86 h 18 v 9 h -18 Z" fill="#8f1616"/>
+    <path d="M -15 -104 q 15 -10 30 0 l 2 17 q -17 8 -34 0 Z" fill="url(#doomHide)"/>
+    <path d="M -14 -103 q 14 -8 28 0 l 0.8 5 q -14.8 -7 -29.6 0 Z" fill="#fca5a5" opacity="0.4"/>
+    <path d="M -15 -102 q -14 -6 -17 -20 q 15 3 21 13 Z M 15 -102 q 14 -6 17 -20 q -15 3 -21 13 Z" fill="url(#doomHorn)" stroke="#78350f" stroke-width="1"/>
+    <path d="M -30 -120 l 4 -9 3 9 Z M 30 -120 l -4 -9 -3 9 Z" fill="#fef3c7"/>
+    <ellipse cx="-6.8" cy="-95" rx="3.6" ry="3" fill="#fde68a"/>
+    <ellipse cx="6.8" cy="-95" rx="3.6" ry="3" fill="#fde68a"/>
+    <circle cx="-6.4" cy="-95" r="1.6" fill="#7c2d12"/>
+    <circle cx="7.2" cy="-95" r="1.6" fill="#7c2d12"/>
+    <path d="M -11 -99 q 5 -3 9 -0.6 M 2 -99 q 4 -2.4 9 0.6" fill="none" stroke="#450a0a" stroke-width="1.6" stroke-linecap="round"/>
+    <path d="M -11 -87 q 11 7 22 0 l -3 6 q -8 4 -16 0 Z" fill="#1f0505"/>
+    <path d="M -7.6 -87.6 l 1.8 5.6 M -2.6 -86.6 l 1 6 M 2.6 -86.6 l -1 6 M 7.6 -87.6 l -1.8 5.6" fill="none" stroke="#fef3c7" stroke-width="1.6"/>
+    ${breathe ? `
+      <path d="M 18 -92 q 26 -10 46 2 q -26 12 -46 -2 Z" fill="#fb923c" opacity="0.8"/>
+      <path d="M 20 -92 q 18 -6 32 1 q -18 8 -32 -1 Z" fill="#fde68a" opacity="0.85"/>
+    ` : ""}
+    <g transform="rotate(${cleave - armSwing} 28 -64)">
+      <path d="M 22 -66 h 13 v 32 a 6.5 6.5 0 0 1 -13 0 Z" fill="url(#doomHide)"/>
+      <path d="M 20 -36 q 8 -6 17 0 l -2 11 q -6 4 -13 0 Z" fill="#8f1616"/>
+      <path d="M 22 -26 l -3 7 M 28 -24 l -1 7.6 M 34 -26 l 2 7" fill="none" stroke="url(#doomHorn)" stroke-width="2" stroke-linecap="round"/>
+      <g transform="rotate(-14 30 -40)">
+        <rect x="27.4" y="-54" width="5" height="44" rx="2.4" fill="#2c0707"/>
+        <path d="M 32 -58 q 19 5 19 21 q -11 -8 -19 -6 Z" fill="url(#doomHorn)" stroke="#78350f" stroke-width="1.2"/>
+        <path d="M 33 -55 q 14 5 15 15 q -8 -5 -15 -4 Z" fill="#fef3c7" opacity="0.45"/>
+        <path d="M 24 -56 h 12 v 5.4 h -12 Z" fill="#611010"/>
+      </g>
+    </g>
+  `;
+}
+
 const MONSTER_SPRITES = {
   plague_rat: plagueRatSprite,
   goblin: goblinSprite,
@@ -6007,6 +6460,11 @@ const MONSTER_SPRITES = {
   minotaur: minotaurSprite,
   necromancer: necromancerSprite,
   dragon_whelp: dragonWhelpSprite,
+  ironhide_juggernaut: ironhideJuggernautSprite,
+  obsidian_colossus: obsidianColossusSprite,
+  abyssal_behemoth: abyssalBehemothSprite,
+  voidplate_titan: voidplateTitanSprite,
+  doomhorn_leviathan: doomhornLeviathanSprite,
   warlord: warlordSprite,
   bone_tyrant: boneTyrantSprite,
   elder_wyrm: elderWyrmSprite
@@ -6175,14 +6633,18 @@ function renderEnemySvg(enemy, now) {
     ? Math.max(0, 1 - (now - enemy.lastAttackAt) / 300)
     : 0;
 
-  const barHeight = enemy.isBoss ? 7 : 4;
-  const hitWidth = enemy.isBoss ? barWidth + 40 : barWidth + 8;
+  const barHeight = enemy.isBoss ? 7 : enemy.isElite ? 5.5 : 4;
+  const hitWidth = enemy.isBoss ? barWidth + 40 : enemy.isElite ? barWidth + 20 : barWidth + 8;
   const aura = enemy.isBoss
     ? `<circle cx="0" cy="${-def.height / 2}" r="${def.height * 0.78}" fill="url(#bossAura)"/>`
-    : "";
+    : enemy.isElite
+      ? `<circle cx="0" cy="${-def.height / 2}" r="${def.height * 0.66}" fill="url(#eliteAura)"/>`
+      : "";
   const crown = enemy.isBoss
     ? `<text class="combat-boss-name" x="0" y="${barY - 8}" text-anchor="middle">${def.label}</text>`
-    : "";
+    : enemy.isElite
+      ? `<text class="combat-elite-name" x="0" y="${barY - 7}" text-anchor="middle">${def.label}</text>`
+      : "";
 
   return `
     <g
