@@ -3457,6 +3457,21 @@ body:has(.camp-screen) {
   color: #fcd34d;
 }
 
+.building-demolish-button {
+  background: rgba(248, 113, 113, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(248, 113, 113, 0.42);
+}
+
+.building-demolish-button:hover:not(:disabled),
+.building-demolish-button:focus-visible {
+  background: rgba(248, 113, 113, 0.2);
+  box-shadow: inset 0 0 0 1px rgba(252, 165, 165, 0.7);
+}
+
+.building-demolish-button .build-panel-option-cost {
+  color: #86efac;
+}
+
 .building-panel-perk {
   margin: 0;
   font-size: 0.86rem;

@@ -75,6 +75,7 @@ const BUILDING_CONFIG = {
   farm: { maxLevel: 10, upgradeBase: 55, upgradeStep: 0, summary: "Feeds a bigger population" },
   mint: { maxLevel: 10, upgradeBase: 100, upgradeStep: 0, summary: "Presses coin on a timer" }
 };
+const BUILDING_DEMOLISH_REFUND = 100;
 const UNIT_DEF = {
   unarmed_warrior: { label: "Unarmed Warrior", building: "barracks", unlockLevel: 1, speed: 3, damage: 3, health: 20, defense: 0, cost: 8 },
   warrior: { label: "Warrior", building: "barracks", unlockLevel: 2, speed: 3, damage: 8, health: 25, defense: 0.5, cost: 15 },
@@ -4678,6 +4679,16 @@ function upgradeBuilding(slotIndex) {
   return true;
 }
 
+function demolishBuilding(slotIndex) {
+  const building = getSlotBuilding(slotIndex);
+  if (state.gameOver || !building || building.level < getBuildingMaxLevel(building.id)) return false;
+
+  state.buildings[slotIndex] = null;
+  state.coins += BUILDING_DEMOLISH_REFUND;
+  refreshCombatHud();
+  return true;
+}
+
 function isTentMaxed() {
   return state.tentLevel >= TENT_MAX_LEVEL;
 }
@@ -7204,6 +7215,16 @@ function renderBuildingPanel(slotIndex) {
       <button class="build-panel-option building-upgrade-button" type="button" disabled>
         <span class="build-panel-option-label">Max Level</span>
       </button>
+      <button
+        class="build-panel-option building-demolish-button"
+        type="button"
+        data-action="demolish-building"
+        aria-label="Delete ${def.label} for ${BUILDING_DEMOLISH_REFUND} coin and clear this plot"
+      >
+        <span class="build-panel-option-label">Delete Building</span>
+        <span class="build-panel-option-blurb">Clears this plot so you can build again</span>
+        <span class="build-panel-option-cost">+${BUILDING_DEMOLISH_REFUND} coin</span>
+      </button>
     `
     : `
       <button
@@ -7680,6 +7701,19 @@ app.addEventListener("click", (event) => {
     event.stopPropagation();
     if (upgradeBuilding(state.buildPanelSlot)) {
       syncCampPanels();
+    }
+    return;
+  }
+
+  if (actionTarget.dataset.action === "demolish-building") {
+    if (state.gameOver || state.buildPanelSlot === null) return;
+    event.stopPropagation();
+    if (demolishBuilding(state.buildPanelSlot)) {
+      state.buildPanelSlot = null;
+      render();
+      if (state.screen === "camp" && !combat.loopRunning) {
+        startCombatLoop(true);
+      }
     }
     return;
   }
