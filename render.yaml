@@ -12,3 +12,20 @@ services:
         value: "20"
       - key: DATABASE_URL
         sync: false
+
+  - type: web
+    name: bb-budybattle
+    runtime: node
+    rootDir: bb-budybattle-for-real
+    buildCommand: npm install --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /var/data
+    disk:
+      name: bb-budybattle-data
+      mountPath: /var/data
+      sizeGB: 1
