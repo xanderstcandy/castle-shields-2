@@ -66,7 +66,7 @@ const state = {
 
 const REWARDS_WHEEL_SEGMENTS = [
   { kind: "coins", weight: 1, amount: 100 },
-  { kind: "blank", weight: 10 },
+  { kind: "random-potion", weight: 10 },
   { kind: "coins", weight: 19, amount: 25 },
   { kind: "permanent", weight: 12, weaponName: "Spoon" },
   { kind: "coins", weight: 13, amount: 50 },
@@ -1972,21 +1972,33 @@ function renderBattleMenu() {
 function gearSkinLookButton(skinId) {
   const entry = findSkin(skinId);
   if (!entry) return "";
-  const active = state.equippedSkin === skinId;
+  const owned = state.ownedSkins.includes(skinId);
+  const active = state.equippedSkin === skinId || state.skinTryOn === skinId;
+  const currency = skinCurrency(entry);
   return `
     <button
       type="button"
-      class="gear-avatar-btn gear-avatar-btn--skin gear-skin-${entry.rarity}${active ? " active" : ""}"
-      data-action="wear-skin"
+      class="gear-avatar-btn gear-avatar-btn--skin gear-skin-${entry.rarity}${active ? " active" : ""}${owned ? "" : " locked"}"
+      data-action="${owned ? "wear-skin" : "preview-skin"}"
       data-skin="${skinId}"
       aria-pressed="${active}"
-      aria-label="Wear ${escapeHtml(entry.name)}"
+      aria-label="${owned ? "Wear" : "Try on"} ${escapeHtml(entry.name)}"
     >
       ${window.BBBuddyPreview
         ? `<img class="gear-avatar-3d" src="${window.BBBuddyPreview.snapshot(state.avatar, 160, skinId)}" alt="" draggable="false">`
         : `<span class="gear-skin-swatch" style="background:linear-gradient(160deg, ${entry.outfit}, ${entry.accent})"></span>`}
+      ${owned ? "" : `<span class="gear-avatar-skin-price">${currency === "diamonds" ? shopDiamondSvg() : shopCoinSvg()}${escapeHtml(formatShopCoinAmount(entry.price))}</span>`}
       <span class="gear-avatar-skin-name">${escapeHtml(entry.name)}</span>
     </button>
+  `;
+}
+
+function gearSpecialLooks() {
+  const owned = SKIN_CATALOG.filter((entry) => state.ownedSkins.includes(entry.id));
+  const locked = SKIN_CATALOG.filter((entry) => !state.ownedSkins.includes(entry.id));
+  return `
+    <p class="gear-picker-label">Special looks ${owned.length}/${SKIN_CATALOG.length}</p>
+    ${[...owned, ...locked].map((entry) => gearSkinLookButton(entry.id)).join("")}
   `;
 }
 
@@ -2296,7 +2308,7 @@ function renderGear() {
         ${gearAvatarButton("girl-1")}
         ${gearAvatarButton("girl-2")}
         ${gearAvatarButton("girl-3")}
-        ${state.ownedSkins.length ? `<p class="gear-picker-label">Your skins</p>${state.ownedSkins.map(gearSkinLookButton).join("")}` : ""}
+        ${gearSpecialLooks()}
         <p class="gear-scroll-hint">Scroll for all looks</p>
       </aside>
       <span class="gear-rail" aria-hidden="true"><span class="gear-rail-thumb" data-gear-thumb></span></span>
@@ -3424,6 +3436,21 @@ app.addEventListener("click", (event) => {
     return;
   }
 
+  if (action === "preview-skin") {
+    const skinId = actionTarget.dataset.skin;
+    if (!findSkin(skinId)) return;
+    const picker = app.querySelector(".gear-picker");
+    const pickerScroll = picker ? picker.scrollTop : 0;
+    state.gearPanel = "skins";
+    state.skinTryOn = skinId;
+    state.gearNotice = "";
+    render();
+    const nextPicker = app.querySelector(".gear-picker");
+    if (nextPicker) nextPicker.scrollTop = pickerScroll;
+    app.querySelector(`.gear-skin-try[data-skin="${skinId}"]`)?.closest(".gear-skin-card")?.scrollIntoView({ block: "center" });
+    return;
+  }
+
   if (action === "wear-skin") {
     const skinId = actionTarget.dataset.skin;
     if (!state.ownedSkins.includes(skinId)) return;
@@ -3431,7 +3458,11 @@ app.addEventListener("click", (event) => {
     state.skinTryOn = "";
     state.gearNotice = `Wearing ${findSkin(skinId).name}.`;
     persistShopInventory();
+    const picker = app.querySelector(".gear-picker");
+    const pickerScroll = picker ? picker.scrollTop : 0;
     render();
+    const nextPicker = app.querySelector(".gear-picker");
+    if (nextPicker) nextPicker.scrollTop = pickerScroll;
     return;
   }
 
