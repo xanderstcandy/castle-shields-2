@@ -3767,16 +3767,32 @@ function getBossType(waveNumber = combat.waveNumber) {
   return BOSS_ORDER[(getBossTier(waveNumber) - 1) % BOSS_ORDER.length];
 }
 
+function getBossStatMultipliers(tier) {
+  let health = 1 + (tier - 1) * 0.85;
+  let damage = 1;
+  let speed = 1 + (tier - 1) * 0.05;
+
+  if (tier >= 3) {
+    const surge = tier - 2;
+    health *= 1.6 + surge * 1.35 + surge * surge * 0.4;
+    damage *= 1.4 + surge * 2.1 + surge * 0.65;
+    speed *= 1 + surge * 0.11;
+  }
+
+  return { health, damage, speed };
+}
+
 function spawnBoss() {
   const type = getBossType();
   const def = ENEMY_DEF[type];
   const tier = getBossTier();
+  const bossScale = getBossStatMultipliers(tier);
   const laneIndex = Math.floor(Math.random() * SPAWN_LANES.length);
   const lane = SPAWN_LANES[laneIndex];
   const start = lane[0];
   const lateScale = getWaveEnemyScale();
   const earlyScale = getEarlyGameEnemyScale();
-  const health = Math.round(def.health * (1 + (tier - 1) * 0.85) * lateScale.health * earlyScale.health);
+  const health = Math.round(def.health * bossScale.health * lateScale.health * earlyScale.health);
 
   combat.enemies.push({
     id: combat.nextEnemyId++,
@@ -3785,8 +3801,8 @@ function spawnBoss() {
     waypointIndex: 1,
     health,
     maxHealth: health,
-    damage: Math.max(1, Math.round(def.damage * lateScale.damage * earlyScale.damage)),
-    speed: def.speed * (1 + (tier - 1) * 0.05) * lateScale.speed * earlyScale.speed,
+    damage: Math.max(1, Math.round(def.damage * bossScale.damage * lateScale.damage * earlyScale.damage)),
+    speed: def.speed * bossScale.speed * lateScale.speed * earlyScale.speed,
     facing: lane[1].x >= start.x ? 1 : -1,
     lastAttackAt: 0,
     isBoss: true,

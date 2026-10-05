@@ -45,6 +45,7 @@ const state = {
   ownedOneGame: {},
   ownedPermanent: [],
   ownedPotions: {},
+  ownedPotionsPermanent: [],
   equippedPotion: "",
   equippedWeapons: [],
   ownedBbsOneGame: {},
@@ -69,7 +70,7 @@ const REWARDS_WHEEL_SEGMENTS = [
   { kind: "coins", weight: 7, amount: 75 },
   { kind: "permanent", weight: 7, weaponName: "Fork" },
   { kind: "random-potion", weight: 10 },
-  { kind: "random-potion", weight: 10 }
+  { kind: "bb-one-game", weight: 10, bbName: "Snavier" }
 ];
 
 const MAX_EQUIPPED_WEAPONS = 2;
@@ -693,6 +694,7 @@ function liveBar() {
 }
 
 function template(html, className) {
+  disposeGearPreview3d();
   app.className = `app ${className}`.trim();
   app.innerHTML = html;
 }
@@ -1245,8 +1247,11 @@ function readShopInventoryRecord(username) {
       if (SPIN_POTION_NAMES.includes(name) && value > 0) potions[name] = value;
     });
   }
+  const potionsPermanent = Array.isArray(entry?.potionsPermanent)
+    ? entry.potionsPermanent.filter((name) => SPIN_POTION_NAMES.includes(name))
+    : [];
   let equippedPotion = typeof entry?.equippedPotion === "string" ? entry.equippedPotion : "";
-  if (!SPIN_POTION_NAMES.includes(equippedPotion) || !(potions[equippedPotion] > 0)) {
+  if (!SPIN_POTION_NAMES.includes(equippedPotion) || !(potions[equippedPotion] > 0 || potionsPermanent.includes(equippedPotion))) {
     equippedPotion = "";
   }
   const bbOneGame = {};
@@ -1261,7 +1266,7 @@ function readShopInventoryRecord(username) {
     : [];
   let equippedBb = typeof entry?.equippedBb === "string" ? entry.equippedBb : "";
   if (!(bbOneGame[equippedBb] > 0) && !bbPermanent.includes(equippedBb)) equippedBb = "";
-  return { oneGame, permanent, equipped, potions, equippedPotion, bbOneGame, bbPermanent, equippedBb };
+  return { oneGame, permanent, equipped, potions, potionsPermanent, equippedPotion, bbOneGame, bbPermanent, equippedBb };
 }
 
 function findBb(name) {
@@ -1319,9 +1324,17 @@ function pickRandomSpinPotion() {
   return SPIN_POTION_ITEMS[SPIN_POTION_ITEMS.length - 1].name;
 }
 
-function grantSpinPotion(name) {
-  if (!SPIN_POTION_NAMES.includes(name)) return;
-  state.ownedPotions[name] = (state.ownedPotions[name] || 0) + 1;
+function grantSpinPotionPermanent(name) {
+  if (!SPIN_POTION_NAMES.includes(name)) return false;
+  if (state.ownedPotionsPermanent.includes(name)) return false;
+  state.ownedPotionsPermanent = [...state.ownedPotionsPermanent, name];
+  persistShopInventory();
+  return true;
+}
+
+function grantSpinBbOneGame(name) {
+  if (!findBb(name)) return;
+  state.ownedBbsOneGame = { ...state.ownedBbsOneGame, [name]: (state.ownedBbsOneGame[name] || 0) + 1 };
   persistShopInventory();
 }
 
@@ -1330,7 +1343,7 @@ function isWeaponOwned(name) {
 }
 
 function isPotionOwned(name) {
-  return (state.ownedPotions[name] || 0) > 0;
+  return (state.ownedPotions[name] || 0) > 0 || state.ownedPotionsPermanent.includes(name);
 }
 
 function gearPotionArtSvg(name) {
@@ -1380,6 +1393,7 @@ function syncShopWalletFromStorage() {
   state.ownedOneGame = inventory.oneGame;
   state.ownedPermanent = inventory.permanent;
   state.ownedPotions = inventory.potions;
+  state.ownedPotionsPermanent = inventory.potionsPermanent;
   state.equippedPotion = inventory.equippedPotion;
   state.equippedWeapons = inventory.equipped;
   state.ownedBbsOneGame = inventory.bbOneGame;
@@ -1399,6 +1413,7 @@ function persistShopInventory() {
       oneGame: state.ownedOneGame,
       permanent: state.ownedPermanent,
       potions: state.ownedPotions,
+      potionsPermanent: state.ownedPotionsPermanent,
       equippedPotion: state.equippedPotion,
       equipped: state.equippedWeapons,
       bbOneGame: state.ownedBbsOneGame,
@@ -1718,7 +1733,7 @@ function consumeOneGameLoadout() {
     state.ownedOneGame = next;
   });
   state.equippedWeapons = state.equippedWeapons.filter((name) => isWeaponOwned(name));
-  if (state.equippedPotion && state.ownedPotions[state.equippedPotion] > 0) {
+  if (state.equippedPotion && !state.ownedPotionsPermanent.includes(state.equippedPotion) && state.ownedPotions[state.equippedPotion] > 0) {
     const next = { ...state.ownedPotions, [state.equippedPotion]: state.ownedPotions[state.equippedPotion] - 1 };
     if (next[state.equippedPotion] <= 0) {
       delete next[state.equippedPotion];
@@ -1916,9 +1931,23 @@ function gearAvatarButton(avatarId) {
       aria-pressed="${state.avatar === avatarId}"
       aria-label="Choose buddy look ${avatarId}"
     >
-      ${buddyAvatarSvg(avatarId, true)}
+      ${window.BBBuddyPreview
+        ? `<img class="gear-avatar-3d" src="${window.BBBuddyPreview.snapshot(avatarId)}" alt="" draggable="false">`
+        : buddyAvatarSvg(avatarId, true)}
     </button>
   `;
+}
+
+let gearPreview3d = null;
+
+function disposeGearPreview3d() {
+  if (!gearPreview3d) return;
+  gearPreview3d.dispose();
+  gearPreview3d = null;
+}
+
+function gearPreviewOptions() {
+  return { avatar: state.avatar, weapons: state.equippedWeapons, bb: state.equippedBb, yaw: state.avatarYaw };
 }
 
 function renderBbStats(bb) {
@@ -1928,6 +1957,8 @@ function renderBbStats(bb) {
   ];
   if (bb.defense !== undefined) parts.push(`${shopShieldSvg()} ${bb.defense} defense`);
   if (bb.speed) parts.push(escapeHtml(bb.speed));
+  parts.push(`${bb.size.toFixed(2)}× your height`);
+  if (bbIsRideable(bb)) parts.push(`<strong class="bbs-entry-rideable">Rideable</strong>`);
   return parts.map((part) => `<span class="bbs-entry-stat">${part}</span>`).join("");
 }
 
@@ -2058,34 +2089,47 @@ function gearEquippedBbMarkup() {
 }
 
 function renderGearPotionsSection() {
-  const entries = Object.entries(state.ownedPotions).filter(([, count]) => count > 0);
-  const items = entries.length
-    ? entries.map(([name, count]) => {
-      const equipped = state.equippedPotion === name;
-      return `
-        <li>
-          <button
-            type="button"
-            class="gear-weapon-item gear-potion-item${equipped ? " equipped" : ""}"
-            data-action="toggle-equip-potion"
-            data-potion-name="${escapeHtml(name)}"
-            aria-pressed="${equipped}"
-          >
-            <span class="gear-weapon-art gear-potion-art">${gearPotionArtSvg(name)}</span>
-            <span class="gear-weapon-name">${escapeHtml(name)}${count > 1 ? ` <span class="gear-weapon-count">×${count}</span>` : ""}</span>
-            ${equipped ? `<span class="gear-weapon-badge">Equipped</span>` : ""}
-          </button>
-        </li>
-      `;
-    }).join("")
-    : `<li class="gear-weapon-empty">None yet</li>`;
+  const entries = [
+    ...Object.entries(state.ownedPotions).filter(([, count]) => count > 0).map(([name, count]) => ["1 Game", name, count]),
+    ...state.ownedPotionsPermanent.map((name) => ["Permanent", name, 0])
+  ];
+  const section = (title) => {
+    const rows = entries.filter(([group]) => group === title);
+    const items = rows.length
+      ? rows.map(([, name, count]) => {
+        const equipped = state.equippedPotion === name;
+        return `
+          <li>
+            <button
+              type="button"
+              class="gear-weapon-item gear-potion-item${equipped ? " equipped" : ""}"
+              data-action="toggle-equip-potion"
+              data-potion-name="${escapeHtml(name)}"
+              aria-pressed="${equipped}"
+            >
+              <span class="gear-weapon-art gear-potion-art">${gearPotionArtSvg(name)}</span>
+              <span class="gear-weapon-name">${escapeHtml(name)}${count > 1 ? ` <span class="gear-weapon-count">×${count}</span>` : ""}</span>
+              ${equipped ? `<span class="gear-weapon-badge">Equipped</span>` : ""}
+            </button>
+          </li>
+        `;
+      }).join("")
+      : `<li class="gear-weapon-empty">None yet</li>`;
+    return `
+      <section class="gear-weapon-section">
+        <h3 class="gear-weapon-section-title">${title}</h3>
+        <ul class="gear-weapon-list">${items}</ul>
+      </section>
+    `;
+  };
   return `
     <aside class="gear-potions-col" aria-label="Potions">
       <h2 class="gear-weapons-title gear-potions-title">Potions</h2>
       <p class="gear-equip-count">Equipped ${state.equippedPotion ? "1/1" : "0/1"} · tap to equip</p>
       ${state.gearNotice ? `<p class="gear-equip-notice" role="status">${escapeHtml(state.gearNotice)}</p>` : ""}
       <div class="gear-weapons-body gear-potions-body">
-        <ul class="gear-weapon-list">${items}</ul>
+        ${section("1 Game")}
+        ${section("Permanent")}
       </div>
     </aside>
   `;
@@ -2155,8 +2199,9 @@ function renderGear() {
         ${renderGearStats()}
         <div class="gear-preview-wrap gear-preview-turnable" data-gear-preview tabindex="0" aria-label="Drag or use buttons to turn your buddy">
           <span class="gear-preview-glow" aria-hidden="true"></span>
-          ${buddyAvatarSvg(state.avatar, false, state.avatarYaw, state.equippedWeapons)}
-          ${gearEquippedBbMarkup()}
+          ${window.BBBuddyPreview
+            ? `<div class="gear-preview-3d" data-gear-3d></div>`
+            : buddyAvatarSvg(state.avatar, false, state.avatarYaw, state.equippedWeapons) + gearEquippedBbMarkup()}
         </div>
         <div class="gear-turn-controls">
           <button type="button" class="gear-turn-btn" data-action="turn-buddy" data-dir="-1" aria-label="Turn left">◀ Turn</button>
@@ -2170,6 +2215,8 @@ function renderGear() {
 
   bindGearRail();
   bindGearTurn();
+  const mount = app.querySelector("[data-gear-3d]");
+  if (mount && window.BBBuddyPreview) gearPreview3d = window.BBBuddyPreview.mount(mount, gearPreviewOptions());
 }
 
 function bindGearTurn() {
@@ -2185,6 +2232,10 @@ function bindGearTurn() {
     writeAvatarYaw(state.avatarYaw);
     const label = app.querySelector(".gear-yaw-label");
     if (label) label.textContent = YAW_LABELS[state.avatarYaw];
+    if (gearPreview3d) {
+      gearPreview3d.update({ yaw: state.avatarYaw });
+      return;
+    }
     preview.innerHTML = `<span class="gear-preview-glow" aria-hidden="true"></span>${buddyAvatarSvg(state.avatar, false, state.avatarYaw, state.equippedWeapons)}`;
   };
 
@@ -2657,6 +2708,38 @@ function rewardsWheelWeaponLabel(name, startDeg, sweepDeg) {
   `;
 }
 
+function rewardsWheelBbArt(bbName, startDeg, sweepDeg) {
+  const bb = findBb(bbName);
+  if (!bb || typeof bbArtSvg === "undefined") return "";
+  const cx = 120;
+  const cy = 120;
+  const mid = startDeg + sweepDeg / 2;
+  const rad = (mid - 90) * (Math.PI / 180);
+  const scale = sweepDeg < 9 ? 0.22 : 0.26;
+  const lx = cx + 50 * Math.cos(rad);
+  const ly = cy + 50 * Math.sin(rad);
+  const inner = bbArtSvg(bb.art).replace(/^<svg[^>]*>|<\/svg>$/g, "");
+  return `<g transform="translate(${lx.toFixed(2)} ${ly.toFixed(2)}) rotate(${mid.toFixed(2)}) scale(${scale}) translate(-24 -24)">${inner}</g>`;
+}
+
+function rewardsWheelBbLabel(bbName, startDeg, sweepDeg) {
+  const cx = 120;
+  const cy = 120;
+  const mid = startDeg + sweepDeg / 2;
+  const rad = (mid - 90) * (Math.PI / 180);
+  const lx = cx + 78 * Math.cos(rad);
+  const ly = cy + 78 * Math.sin(rad);
+  const fontSize = sweepDeg < 9 ? 5.5 : 6;
+  return `
+    <text x="${lx.toFixed(2)}" y="${(ly - 4).toFixed(2)}" text-anchor="middle" dominant-baseline="middle"
+      transform="rotate(${mid.toFixed(2)} ${lx.toFixed(2)} ${(ly - 4).toFixed(2)})"
+      font-size="${fontSize}" font-weight="900" fill="#ccfbf1" font-family="Arial,sans-serif">${escapeHtml(bbName)}</text>
+    <text x="${lx.toFixed(2)}" y="${(ly + 5).toFixed(2)}" text-anchor="middle" dominant-baseline="middle"
+      transform="rotate(${mid.toFixed(2)} ${lx.toFixed(2)} ${(ly + 5).toFixed(2)})"
+      font-size="5" font-weight="800" fill="#99f6e4" font-family="Arial,sans-serif">1 game</text>
+  `;
+}
+
 function rewardsWheelRandomPotionArt(startDeg, sweepDeg) {
   if (typeof potionArtSvg === "undefined") return "";
   const cx = 120;
@@ -2681,9 +2764,12 @@ function rewardsWheelRandomPotionLabel(startDeg, sweepDeg) {
   const lx = cx + 78 * Math.cos(rad);
   const ly = cy + 78 * Math.sin(rad);
   return `
-    <text x="${lx.toFixed(2)}" y="${ly.toFixed(2)}" text-anchor="middle" dominant-baseline="middle"
-      transform="rotate(${mid.toFixed(2)} ${lx.toFixed(2)} ${ly.toFixed(2)})"
+    <text x="${lx.toFixed(2)}" y="${(ly - 4).toFixed(2)}" text-anchor="middle" dominant-baseline="middle"
+      transform="rotate(${mid.toFixed(2)} ${lx.toFixed(2)} ${(ly - 4).toFixed(2)})"
       font-size="6.5" font-weight="900" fill="#e9d5ff" font-family="Arial,sans-serif">Random</text>
+    <text x="${lx.toFixed(2)}" y="${(ly + 5).toFixed(2)}" text-anchor="middle" dominant-baseline="middle"
+      transform="rotate(${mid.toFixed(2)} ${lx.toFixed(2)} ${(ly + 5).toFixed(2)})"
+      font-size="5" font-weight="800" fill="#ddd6fe" font-family="Arial,sans-serif">perm</text>
   `;
 }
 
@@ -2704,8 +2790,16 @@ function resolveRewardsSpin(segment) {
   }
   if (segment.kind === "random-potion") {
     const name = pickRandomSpinPotion();
-    grantSpinPotion(name);
-    return `You won a random potion: ${name}!`;
+    if (!grantSpinPotionPermanent(name)) {
+      return `You spun ${name}, but you already own it permanently.`;
+    }
+    return `You won ${name} permanent!`;
+  }
+  if (segment.kind === "bb-one-game") {
+    const name = segment.bbName;
+    if (!findBb(name)) return "No reward this spin.";
+    grantSpinBbOneGame(name);
+    return `You won ${name} for 1 game!`;
   }
   return "No reward this spin.";
 }
@@ -2720,15 +2814,18 @@ function rewardsWheelSvg() {
     const isCoins = segment.kind === "coins";
     const isPermanent = segment.kind === "permanent";
     const isRandomPotion = segment.kind === "random-potion";
+    const isBbOneGame = segment.kind === "bb-one-game";
     const fill = isCoins
       ? (coinFills[segment.amount] || "#fbbf24")
       : isPermanent
         ? "#1a4a66"
         : isRandomPotion
           ? "#5b21b6"
-          : index % 2 === 0
-            ? "#132a52"
-            : "#0b1836";
+          : isBbOneGame
+            ? "#0f766e"
+            : index % 2 === 0
+              ? "#132a52"
+              : "#0b1836";
     const path = rewardsWheelSlicePath(cx, cy, r, segment.start, segment.sweep);
     let label = "";
     if (isCoins) {
@@ -2749,6 +2846,9 @@ function rewardsWheelSvg() {
     } else if (isRandomPotion) {
       label = rewardsWheelRandomPotionArt(segment.start, segment.sweep)
         + rewardsWheelRandomPotionLabel(segment.start, segment.sweep);
+    } else if (isBbOneGame) {
+      label = rewardsWheelBbArt(segment.bbName, segment.start, segment.sweep)
+        + rewardsWheelBbLabel(segment.bbName, segment.start, segment.sweep);
     }
     return `<path d="${path}" fill="${fill}" stroke="rgba(147, 197, 253, 0.42)" stroke-width="1.4"/>${label}`;
   }).join("");
@@ -3273,3 +3373,6 @@ state.avatar = readAvatar();
 state.avatarYaw = readAvatarYaw();
 render();
 setInterval(tickLiveCount, 2200);
+window.addEventListener("bb3d-ready", () => {
+  if (state.screen === "gear") render();
+});

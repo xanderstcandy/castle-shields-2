@@ -1,5 +1,5 @@
 const data = require("./game-data.js");
-const { BB_CATALOG, bbIsRideable, BB_CHARACTER_HEIGHT } = require("./bb-art.js");
+const { BB_CATALOG, bbIsRideable, bbFootRadius, BB_CHARACTER_HEIGHT } = require("./bb-art.js");
 const mapGen = require("./map-gen.js");
 
 const TICK_MS = 50;
@@ -19,7 +19,7 @@ const BOT_TUNING = {
 };
 const BB_SPEED_UNITS = { "Very slow": 3, Slow: 5, Fast: 10, "Super fast": 12 };
 const BB_DEFAULT_SPEED = 7.5;
-const RIDE_REACH = 2.5;
+const RIDE_REACH = 3.5;
 const RIDER_SEAT = 0.82;
 const BB_MAX_COLLIDE = 1.2;
 const MODES = ["ranked", "competitive"];
@@ -192,7 +192,7 @@ class Match {
       y: owner.y,
       yaw: 0,
       height,
-      radius: Math.max(0.35, Math.min(2.2, height * 0.3)),
+      radius: bbFootRadius(def),
       rideable: bbIsRideable(def),
       rider: 0,
       alive: true
@@ -655,28 +655,30 @@ class Match {
     });
     let gx = owner.x;
     let gz = owner.z;
-    let stopAt = 3;
+    let stopAt = 3 + bb.radius;
     if (target) {
       gx = target.ref.x;
       gz = target.ref.z;
-      stopAt = 1.4;
+      stopAt = 1 + bb.radius + (target.kind === "bb" ? target.ref.radius : 0);
     }
     const dx = gx - bb.x;
     const dz = gz - bb.z;
     const dist = Math.hypot(dx, dz);
-    if (dist > stopAt) {
-      const step = Math.min(dist - stopAt, bb.speed * dt);
-      const pos = { x: bb.x + (dx / dist) * step, z: bb.z + (dz / dist) * step };
-      mapGen.resolveCollision(this.map, pos, 0.45);
-      bb.x = pos.x;
-      bb.z = pos.z;
+    if (!bb.rider) {
+      if (dist > stopAt) {
+        const step = Math.min(dist - stopAt, bb.speed * dt);
+        const pos = { x: bb.x + (dx / dist) * step, z: bb.z + (dz / dist) * step };
+        mapGen.resolveCollision(this.map, pos, Math.min(bb.radius, BB_MAX_COLLIDE));
+        bb.x = pos.x;
+        bb.z = pos.z;
+      }
+      if (dist > 60) {
+        bb.x = owner.x + 1.5 + bb.radius;
+        bb.z = owner.z + 1.5 + bb.radius;
+      }
+      bb.y = mapGen.terrainHeight(this.map, bb.x, bb.z);
+      bb.yaw = Math.atan2(dx, dz);
     }
-    if (dist > 60) {
-      bb.x = owner.x + 1.5;
-      bb.z = owner.z + 1.5;
-    }
-    bb.y = mapGen.terrainHeight(this.map, bb.x, bb.z);
-    bb.yaw = Math.atan2(dx, dz);
     if (target && dist <= stopAt + 0.6) {
       const amount = bb.damage * (dt * 1000 / bb.attackMs);
       if (target.kind === "player") this.damagePlayer(target.ref, amount, owner, { cause: bb.name });
@@ -685,9 +687,11 @@ class Match {
   }
 
   hazardTick(hazard, dt, now) {
+    const waterSurface = Math.max(hazard.waterLevel || 0, 0);
     const inHazard = (x, z, y, fireResist) => {
       const ground = mapGen.terrainHeight(this.map, x, z);
-      if (ground < hazard.waterLevel - 0.3 || ground < -0.3) return { dps: mapGen.WATER_DPS, cause: "Drowned" };
+      const flooded = ground < hazard.waterLevel - 0.3 || ground < -0.3;
+      if (flooded && y < waterSurface + 0.8) return { dps: mapGen.WATER_DPS, cause: "Drowned" };
       if (hazard.lavaRadius && Math.hypot(x, z) < hazard.lavaRadius && !fireResist && y < ground + 1.5) {
         return { dps: mapGen.LAVA_DPS, cause: "Lava" };
       }
@@ -763,7 +767,7 @@ class Match {
       }
       for (const bb of this.bbs) {
         if (!bb.alive || bb.owner === proj.owner) continue;
-        if (Math.hypot(bb.x - nx, bb.z - nz) < 0.9 && ny < bb.y + 1.6) {
+        if (Math.hypot(bb.x - nx, bb.z - nz) < 0.5 + bb.radius && ny > bb.y - 0.2 && ny < bb.y + bb.height) {
           if (owner) this.applyWeaponHit(owner, proj.item, proj.damage, null, bb);
           return false;
         }
@@ -962,7 +966,7 @@ class Match {
     this.players.forEach((p) => {
       if (!p.alive) return;
       if (p.disconnectedAt) {
-        if (now - p.disconnectedAt > RECONNECT_GRACE_MS) this.eliminate(p, null, "Disconnected");
+        if (Date.now() - p.disconnectedAt > RECONNECT_GRACE_MS) this.eliminate(p, null, "Disconnected");
         return;
       }
       if (p.bot) this.botThink(p, hazard, now);
@@ -980,9 +984,9 @@ class Match {
     const now = this.elapsed();
     const players = this.players.filter((p) => p.alive).map((p) => [
       p.id, round2(p.x), round2(p.y), round2(p.z), round2(p.yaw), Math.ceil(p.hp), p.maxHp,
-      this.heldItem(p) || "", now < p.stunUntil ? 1 : 0, now < p.swingUntil ? 1 : 0
+      this.heldItem(p) || "", now < p.stunUntil ? 1 : 0, now < p.swingUntil ? 1 : 0, p.riding || 0
     ]);
-    const bbs = this.bbs.map((bb) => [bb.id, bb.owner, bb.catalogIndex, round2(bb.x), round2(bb.y), round2(bb.z), Math.ceil(bb.hp), bb.maxHp]);
+    const bbs = this.bbs.map((bb) => [bb.id, bb.owner, bb.catalogIndex, round2(bb.x), round2(bb.y), round2(bb.z), Math.ceil(bb.hp), bb.maxHp, bb.rider || 0, round2(bb.yaw)]);
     const proj = this.projectiles.map((pr) => [pr.id, round2(pr.x), round2(pr.y), round2(pr.z)]);
     const rocks = this.rocks.map((rock) => [rock.id, rock.x, rock.z, rock.hitAt - now]);
     const events = this.events;

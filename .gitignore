@@ -3,3 +3,4 @@ tmp-*.png
 accounts.json
 .neon
 .env.local
+.cursor/hooks/push-to-render.log

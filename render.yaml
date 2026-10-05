@@ -4,6 +4,8 @@ services:
     name: castle-shields-2
     runtime: node
     plan: free
+    branch: main
+    autoDeployTrigger: commit
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /
@@ -18,6 +20,8 @@ services:
     runtime: node
     plan: free
     rootDir: bb-budybattle-for-real
+    branch: main
+    autoDeployTrigger: commit
     buildCommand: npm install --omit=dev
     startCommand: npm start
     healthCheckPath: /health

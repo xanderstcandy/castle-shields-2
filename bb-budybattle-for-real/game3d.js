@@ -1,4 +1,5 @@
 import * as THREE from "./vendor/three.module.js";
+import { buildBbModel } from "./bb-models.js";
 
 const INTERP_DELAY_MS = 100;
 const INPUT_SEND_MS = 50;
@@ -11,6 +12,8 @@ const MOUSE_TURN_SPEED = 2;
 const PICKUP_RANGE = 3.2;
 const SVG_NS = "http://www.w3.org/2000/svg";
 const ROOF_HIDE_RANGE = 12;
+const RIDE_REACH = 3.5;
+const RIDER_HIP = 0.7;
 const HIDDEN_MATRIX = new THREE.Matrix4().makeScale(0, 0, 0);
 
 const SKY = {
@@ -403,7 +406,7 @@ function renderHudShell(root) {
     <div class="mh-toast" data-hud-toast></div>
     <div class="mh-prompt" data-hud-prompt></div>
     <div class="mh-hotbar" data-hud-hotbar></div>
-    <div class="mh-help">WASD / arrows move · mouse aims · click attack · Space jump · 1-8 or wheel switch · Enter or double-click pick up · B shop · Q/E or right-drag turn camera · Z scope</div>
+    <div class="mh-help">WASD / arrows move · mouse aims · click attack · Space jump · 1-8 or wheel switch · Enter or double-click pick up · B shop · R ride big B.B.s · Q/E or right-drag turn camera · Z scope</div>
     </div>
     <div class="mh-shop" data-hud-shop hidden></div>
   `);
@@ -451,14 +454,9 @@ function createGame({ root, socket, start }) {
   const hud = (key) => root.querySelector(`[data-hud-${key}]`);
   const defsInner = weaponDefsInner();
   const itemTextures = new Map();
-  const bbTextures = new Map();
   const itemTexture = (name) => {
     if (!itemTextures.has(name)) itemTextures.set(name, svgToTexture(itemSvg(name), 320, 96, defsInner));
     return itemTextures.get(name);
-  };
-  const bbTexture = (index) => {
-    if (!bbTextures.has(index)) bbTextures.set(index, svgToTexture(bbArtSvg(BB_CATALOG[index].art), 128, 128));
-    return bbTextures.get(index);
   };
 
   const g = {
@@ -598,22 +596,22 @@ function createGame({ root, socket, start }) {
 
   function ensureBb(id, catalogIndex, owner) {
     if (g.bbs.has(id)) return g.bbs.get(id);
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: bbTexture(catalogIndex), transparent: true }));
-    sprite.scale.set(1.6, 1.6, 1);
-    sprite.center.set(0.5, 0.05);
+    const def = BB_CATALOG[catalogIndex];
+    const model = buildBbModel(bbModelSpec(def), def.size * BB_CHARACTER_HEIGHT);
     const group = new THREE.Group();
-    group.add(sprite);
+    group.add(model.group);
     if (owner === g.myId) {
+      const inner = model.radius * 0.95 + 0.1;
       const ring = new THREE.Mesh(
-        new THREE.RingGeometry(0.55, 0.72, 20),
-        new THREE.MeshBasicMaterial({ color: 0x4ade80, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false })
+        new THREE.RingGeometry(inner, inner + 0.12 + model.radius * 0.08, 28),
+        new THREE.MeshBasicMaterial({ color: bbIsRideable(def) ? 0xfacc15 : 0x4ade80, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false })
       );
       ring.rotation.x = -Math.PI / 2;
       ring.position.y = 0.06;
       group.add(ring);
     }
     scene.add(group);
-    const entry = { group, sprite, flashUntil: 0 };
+    const entry = { group, model, def, owner, flashUntil: 0, flashing: false, walk: 0, lastPos: new THREE.Vector3() };
     g.bbs.set(id, entry);
     return entry;
   }
@@ -640,7 +638,7 @@ function createGame({ root, socket, start }) {
         if (self && self.group.position.distanceTo(new THREE.Vector3(ev.x, ground, ev.z)) < 25) g.shake = 0.6;
       } else if (ev.k === "bbdown") {
         const bb = g.bbs.get(ev.id);
-        if (bb) spawnPoof(bb.group.position.x, bb.group.position.y + 0.6, bb.group.position.z, 0xfca5a5, 1.2);
+        if (bb) spawnPoof(bb.group.position.x, bb.group.position.y + bb.model.height * 0.5, bb.group.position.z, 0xfca5a5, 1.2 + bb.model.height * 0.4);
       } else if (ev.k === "drink" && ev.id === g.myId) {
         toast(`Drank ${ev.item}`);
       }
@@ -810,6 +808,10 @@ function createGame({ root, socket, start }) {
       selectSlot(Number(code.slice(5)) - 1);
       return;
     }
+    if (code === "KeyR") {
+      sendMsg({ t: "ride" });
+      return;
+    }
     if (code === "KeyZ") g.scope = !g.scope;
     if (["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(code)) event.preventDefault();
     g.keys.add(code);
@@ -930,10 +932,11 @@ function createGame({ root, socket, start }) {
       const moved = entry.group.position.distanceTo(entry.lastPos);
       entry.lastPos.copy(entry.group.position);
       const speed = dt > 0 ? moved / dt : 0;
-      entry.walk += speed * dt * 2.2;
-      const swing = speed > 0.5 ? Math.sin(entry.walk) * 0.7 : 0;
-      entry.legs[0].rotation.x = swing;
-      entry.legs[1].rotation.x = -swing;
+      entry.mountId = row[10] || 0;
+      entry.walk += entry.mountId ? 0 : speed * dt * 2.2;
+      const swing = speed > 0.5 && !entry.mountId ? Math.sin(entry.walk) * 0.7 : 0;
+      entry.legs[0].rotation.x = entry.mountId ? -1.45 : swing;
+      entry.legs[1].rotation.x = entry.mountId ? -1.45 : -swing;
       entry.arms[0].rotation.x = -swing * 0.6;
       const heldName = row[7];
       const ranged = heldName && getWeaponRanged(heldName);
@@ -961,6 +964,7 @@ function createGame({ root, socket, start }) {
     g.bbs.forEach((entry, id) => {
       if (!latest.bbs.has(id)) {
         scene.remove(entry.group);
+        entry.model.disposables.forEach((material) => material.dispose());
         g.bbs.delete(id);
       }
     });
@@ -968,8 +972,36 @@ function createGame({ root, socket, start }) {
       const entry = ensureBb(id, row[2], row[1]);
       const a = older.bbs.get(id) || row;
       const b = newer.bbs.get(id) || row;
-      entry.group.position.set(a[3] + (b[3] - a[3]) * t, a[4] + (b[4] - a[4]) * t + Math.abs(Math.sin(now / 160 + id)) * 0.15, a[5] + (b[5] - a[5]) * t);
-      entry.sprite.material.color.setHex(now < entry.flashUntil ? 0xff6b6b : 0xffffff);
+      const ridden = Boolean(row[8]);
+      const small = entry.def.size < 1;
+      const bob = !ridden && small ? Math.abs(Math.sin(now / 160 + id)) * 0.15 * entry.def.size : 0;
+      entry.group.position.set(a[3] + (b[3] - a[3]) * t, a[4] + (b[4] - a[4]) * t + bob, a[5] + (b[5] - a[5]) * t);
+      const moved = Math.hypot(entry.group.position.x - entry.lastPos.x, entry.group.position.z - entry.lastPos.z);
+      entry.lastPos.copy(entry.group.position);
+      const speed = dt > 0 ? moved / dt : 0;
+      entry.walk += speed * dt * (small ? 3 : 1.4) / Math.max(0.6, entry.def.size);
+      const model = entry.model.group;
+      model.rotation.y = lerpAngle(a[9] || 0, b[9] || 0, t);
+      model.rotation.z = speed > 0.5 ? Math.sin(entry.walk) * 0.06 : 0;
+      const flash = now < entry.flashUntil;
+      if (flash !== entry.flashing) {
+        entry.flashing = flash;
+        entry.model.materials.forEach((material) => material.emissive.setHex(flash ? 0x991b1b : 0x000000));
+      }
+    });
+
+    g.players.forEach((entry) => {
+      const mount = entry.mountId ? g.bbs.get(entry.mountId) : null;
+      if (!mount) return;
+      const [seatX, seatY, seatZ] = mount.model.seat;
+      const yaw = mount.model.group.rotation.y;
+      const cos = Math.cos(yaw);
+      const sin = Math.sin(yaw);
+      entry.group.position.set(
+        mount.group.position.x + seatX * cos + seatZ * sin,
+        mount.group.position.y + seatY - RIDER_HIP,
+        mount.group.position.z - seatX * sin + seatZ * cos
+      );
     });
 
     const liveProj = new Set();
@@ -1061,9 +1093,22 @@ function createGame({ root, socket, start }) {
         nearLoot = group.userData.entry;
       }
     });
+    let rideText = "";
+    if (self && self.mountId) rideText = "R: hop off";
+    else if (self) {
+      let best = Infinity;
+      g.bbs.forEach((bb) => {
+        if (bb.owner !== g.myId || !bbIsRideable(bb.def)) return;
+        const d = Math.hypot(bb.group.position.x - self.group.position.x, bb.group.position.z - self.group.position.z);
+        if (d <= bbFootRadius(bb.def) + RIDE_REACH && d < best) {
+          best = d;
+          rideText = `R: ride ${bb.def.name}`;
+        }
+      });
+    }
     const prompt = hud("prompt");
-    prompt.textContent = nearLoot ? `Enter / double-click: pick up ${nearLoot.item}` : "";
-    prompt.classList.toggle("show", Boolean(nearLoot));
+    prompt.textContent = [nearLoot ? `Enter / double-click: pick up ${nearLoot.item}` : "", rideText].filter(Boolean).join(" · ");
+    prompt.classList.toggle("show", Boolean(nearLoot || rideText));
 
     if (self) {
       const px = self.group.position.x;
@@ -1116,8 +1161,10 @@ function createGame({ root, socket, start }) {
       1.6,
       sideZ * panSide + Math.cos(g.camYaw) * panForward
     ));
-    const distance = scoped ? 4 : CAMERA_DISTANCE;
-    const height = scoped ? 3 : CAMERA_HEIGHT;
+    const mount = self.mountId ? g.bbs.get(self.mountId) : null;
+    const rideBoost = mount ? mount.model.height : 0;
+    const distance = scoped ? 4 : CAMERA_DISTANCE + rideBoost * 1.3;
+    const height = scoped ? 3 : CAMERA_HEIGHT + rideBoost * 0.9;
     const desired = new THREE.Vector3(
       target.x - Math.sin(g.camYaw) * distance,
       target.y + height,
@@ -1207,7 +1254,6 @@ function createGame({ root, socket, start }) {
       });
     });
     itemTextures.forEach((texture) => texture.dispose());
-    bbTextures.forEach((texture) => texture.dispose());
     renderer.dispose();
     root.innerHTML = "";
   };
@@ -1231,3 +1277,204 @@ window.BBGame = {
     game = null;
   }
 };
+
+const PREVIEW_YAW_STEP = Math.PI / 4;
+
+function disposeObject(root) {
+  root.traverse((object) => {
+    if (object.geometry) object.geometry.dispose();
+    if (object.material) [].concat(object.material).forEach((material) => material.dispose());
+  });
+}
+
+function makePreviewScene() {
+  const scene = new THREE.Scene();
+  scene.add(new THREE.HemisphereLight(0xdbeafe, 0x3b2a4a, 1.6));
+  const key = new THREE.DirectionalLight(0xfff1dc, 2.2);
+  key.position.set(3, 6, 5);
+  scene.add(key);
+  const rim = new THREE.DirectionalLight(0x7dd3fc, 1.1);
+  rim.position.set(-4, 3, -4);
+  scene.add(rim);
+  const floor = new THREE.Mesh(
+    new THREE.CircleGeometry(1, 40),
+    new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.28, depthWrite: false })
+  );
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.y = 0.01;
+  scene.add(floor);
+  return { scene, floor };
+}
+
+function buildPreviewBuddy(avatar, weapons) {
+  const buddy = buildBuddy(avatar);
+  buddy.stun.visible = false;
+  const [first, second] = weapons || [];
+  const right = heldItemMesh(first);
+  if (right) {
+    right.rotation.x = getWeaponRanged(first) ? 0 : Math.PI / 2;
+    buddy.hand.add(right);
+  }
+  if (second) {
+    const left = heldItemMesh(second);
+    if (left) {
+      const leftHand = new THREE.Group();
+      leftHand.position.set(0, -0.66, 0.05);
+      left.rotation.x = getWeaponRanged(second) ? 0 : Math.PI / 2;
+      leftHand.add(left);
+      buddy.arms[0].add(leftHand);
+    }
+  }
+  return buddy;
+}
+
+function frameCamera(camera, height, width) {
+  const fov = (camera.fov * Math.PI) / 180;
+  const fitHeight = (height * 1.18) / (2 * Math.tan(fov / 2));
+  const fitWidth = (width * 1.18) / (2 * Math.tan(fov / 2) * camera.aspect);
+  const distance = Math.max(fitHeight, fitWidth, 3.2);
+  camera.position.set(0, height * 0.55, distance);
+  camera.lookAt(0, height * 0.47, 0);
+}
+
+let snapshotRig = null;
+const snapshotCache = new Map();
+
+function buddySnapshot(avatar, size = 160) {
+  const key = `${avatar}:${size}`;
+  if (snapshotCache.has(key)) return snapshotCache.get(key);
+  if (!snapshotRig) {
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+    renderer.setPixelRatio(1);
+    const camera = new THREE.PerspectiveCamera(30, 4 / 5, 0.1, 50);
+    snapshotRig = { renderer, camera, ...makePreviewScene() };
+  }
+  const { renderer, camera, scene, floor } = snapshotRig;
+  renderer.setSize(Math.round(size * 0.8), size, false);
+  const buddy = buildPreviewBuddy(avatar, []);
+  buddy.group.rotation.y = -0.35;
+  buddy.arms[0].rotation.x = 0.12;
+  buddy.arms[1].rotation.x = -0.12;
+  scene.add(buddy.group);
+  floor.scale.setScalar(0.55);
+  frameCamera(camera, 2.2, 1);
+  renderer.render(scene, camera);
+  const url = renderer.domElement.toDataURL("image/png");
+  scene.remove(buddy.group);
+  disposeObject(buddy.group);
+  snapshotCache.set(key, url);
+  return url;
+}
+
+function mountBuddyPreview(container, opts) {
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  container.appendChild(renderer.domElement);
+  renderer.domElement.className = "gear-preview-canvas";
+  const camera = new THREE.PerspectiveCamera(30, 3 / 4, 0.1, 200);
+  const { scene, floor } = makePreviewScene();
+  const stage = new THREE.Group();
+  scene.add(stage);
+
+  const view = { avatar: "", weapons: "", bb: "", yaw: 0, shownYaw: 0, buddy: null, bbModel: null, height: 2.2, width: 1 };
+  let raf = 0;
+  let disposed = false;
+
+  function rebuild(next) {
+    const weaponsKey = JSON.stringify(next.weapons || []);
+    const bbName = next.bb || "";
+    if (next.avatar !== view.avatar || weaponsKey !== view.weapons) {
+      if (view.buddy) {
+        stage.remove(view.buddy.group);
+        disposeObject(view.buddy.group);
+      }
+      view.buddy = buildPreviewBuddy(next.avatar, next.weapons);
+      stage.add(view.buddy.group);
+      view.avatar = next.avatar;
+      view.weapons = weaponsKey;
+    }
+    if (bbName !== view.bb) {
+      if (view.bbModel) {
+        stage.remove(view.bbModel.group);
+        view.bbModel.disposables.forEach((material) => material.dispose());
+      }
+      view.bbModel = null;
+      const def = bbName ? BB_CATALOG.find((entry) => entry.name === bbName) : null;
+      if (def) {
+        view.bbModel = buildBbModel(bbModelSpec(def), def.size * BB_CHARACTER_HEIGHT);
+        stage.add(view.bbModel.group);
+      }
+      view.bb = bbName;
+    }
+    const bb = view.bbModel;
+    if (bb) {
+      const gap = 0.35;
+      const total = 0.9 + gap + bb.radius * 2;
+      view.buddy.group.position.x = -total / 2 + 0.45;
+      bb.group.position.set(total / 2 - bb.radius, 0, -0.2);
+      bb.group.rotation.y = -0.5;
+      view.height = Math.max(2.2, bb.height);
+      view.width = total + 0.6;
+    } else {
+      view.buddy.group.position.x = 0;
+      view.height = 2.2;
+      view.width = 1.2;
+    }
+    floor.scale.setScalar(Math.max(0.7, view.width * 0.55));
+    if (typeof next.yaw === "number") view.yaw = next.yaw;
+  }
+
+  function resize() {
+    const width = container.clientWidth || 300;
+    const height = container.clientHeight || 400;
+    renderer.setSize(width, height, false);
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+    frameCamera(camera, view.height, view.width);
+  }
+
+  function frame(now) {
+    if (disposed) return;
+    const target = -view.yaw * PREVIEW_YAW_STEP;
+    view.shownYaw = lerpAngle(view.shownYaw, target, 0.18);
+    stage.rotation.y = view.shownYaw;
+    if (view.buddy) {
+      const breathe = Math.sin(now / 520);
+      view.buddy.group.position.y = Math.abs(breathe) * 0.02;
+      view.buddy.arms[0].rotation.x = 0.08 + breathe * 0.05;
+      view.buddy.arms[1].rotation.x = -0.08 - breathe * 0.05;
+    }
+    if (view.bbModel && view.bb && (BB_CATALOG.find((entry) => entry.name === view.bb)?.size || 1) < 1) {
+      view.bbModel.group.position.y = Math.abs(Math.sin(now / 200)) * 0.06;
+    }
+    renderer.render(scene, camera);
+    raf = requestAnimationFrame(frame);
+  }
+
+  rebuild(opts);
+  view.shownYaw = -view.yaw * PREVIEW_YAW_STEP;
+  resize();
+  const observer = new ResizeObserver(resize);
+  observer.observe(container);
+  raf = requestAnimationFrame(frame);
+
+  return {
+    update(next) {
+      rebuild({ avatar: view.avatar, weapons: JSON.parse(view.weapons), bb: view.bb, yaw: view.yaw, ...next });
+      resize();
+    },
+    dispose() {
+      disposed = true;
+      cancelAnimationFrame(raf);
+      observer.disconnect();
+      disposeObject(scene);
+      if (view.bbModel) view.bbModel.disposables.forEach((material) => material.dispose());
+      renderer.dispose();
+      renderer.forceContextLoss();
+      renderer.domElement.remove();
+    }
+  };
+}
+
+window.BBBuddyPreview = { snapshot: buddySnapshot, mount: mountBuddyPreview };
+window.dispatchEvent(new Event("bb3d-ready"));
