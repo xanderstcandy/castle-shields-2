@@ -1054,6 +1054,23 @@ function createMatchServer({ wss, verifyAccount, awardStars }) {
     conn.queueKey = "";
   }
 
+  function joinQueue(conn, mode, map) {
+    leaveQueue(conn);
+    const key = queueKey(mode, map);
+    if (!queues.has(key)) queues.set(key, { members: [], since: Date.now() });
+    const queue = queues.get(key);
+    queue.members.push(conn);
+    conn.queueKey = key;
+    conn.mode = mode;
+    conn.map = map;
+    send(conn.ws, {
+      t: "queue",
+      count: queue.members.length,
+      needed: data.MATCH_PLAYERS,
+      waitMs: Math.max(0, QUEUE_WAIT_MS - (Date.now() - queue.since))
+    });
+  }
+
   function findResumeMatch(username) {
     const key = username.toLowerCase();
     for (const match of matches) {
@@ -1096,7 +1113,7 @@ function createMatchServer({ wss, verifyAccount, awardStars }) {
   wss.on("connection", (ws) => {
     ws.isAlive = true;
     ws.on("pong", () => { ws.isAlive = true; });
-    const conn = { ws, username: "", avatar: "boy-1", loadout: null, queueKey: "", match: null };
+    const conn = { ws, username: "", avatar: "boy-1", loadout: null, queueKey: "", match: null, pendingQueue: null };
     ws.on("message", (raw) => {
       let msg;
       try {
@@ -1118,6 +1135,11 @@ function createMatchServer({ wss, verifyAccount, awardStars }) {
             const resumeMatch = findResumeMatch(account.username);
             if (resumeMatch && resumeMatch.resumePlayer(conn)) return;
             send(ws, { t: "hello-ok" });
+            if (conn.pendingQueue) {
+              const pending = conn.pendingQueue;
+              conn.pendingQueue = null;
+              joinQueue(conn, pending.mode, pending.map);
+            }
           })
           .catch(() => send(ws, { t: "error", text: "Sign in again to drop in." }));
         return;
@@ -1129,17 +1151,20 @@ function createMatchServer({ wss, verifyAccount, awardStars }) {
       }
       if (msg.t === "queue") {
         if (!MODES.includes(msg.mode) || !mapGen.MAP_IDS.includes(msg.map)) return;
-        leaveQueue(conn);
-        const key = queueKey(msg.mode, msg.map);
-        if (!queues.has(key)) queues.set(key, { members: [], since: Date.now() });
-        const queue = queues.get(key);
-        queue.members.push(conn);
-        conn.queueKey = key;
-        conn.mode = msg.mode;
-        conn.map = msg.map;
-        send(ws, { t: "queue", count: queue.members.length, needed: data.MATCH_PLAYERS, waitMs: Math.max(0, QUEUE_WAIT_MS - (Date.now() - queue.since)) });
+        if (!conn.username) {
+          conn.pendingQueue = { mode: msg.mode, map: msg.map };
+          return;
+        }
+        joinQueue(conn, msg.mode, msg.map);
       } else if (msg.t === "playBots") {
-        if (!conn.queueKey) return;
+        if (!conn.queueKey && conn.pendingQueue) {
+          joinQueue(conn, conn.pendingQueue.mode, conn.pendingQueue.map);
+          conn.pendingQueue = null;
+        }
+        if (!conn.queueKey) {
+          send(ws, { t: "error", text: "Join the queue first, then try Play Bots again." });
+          return;
+        }
         const [mode, map] = conn.queueKey.split(":");
         leaveQueue(conn);
         startMatch(mode, map, [conn]);

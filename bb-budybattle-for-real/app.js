@@ -1823,6 +1823,8 @@ function joinMatchQueue(mode, map) {
   const socket = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
   bindMatchSocket(socket);
   socket.onopen = () => {
+    state.matchQueue = { ...state.matchQueue, status: "Signing in to the drop server..." };
+    updateQueueDom();
     socket.send(JSON.stringify({
       t: "hello",
       username: state.username,
@@ -1830,14 +1832,25 @@ function joinMatchQueue(mode, map) {
       avatar: state.avatar,
       loadout: { weapons: state.equippedWeapons, potion: state.equippedPotion, bb: state.equippedBb, skin: state.equippedSkin }
     }));
-    socket.send(JSON.stringify({ t: "queue", mode, map }));
   };
+}
+
+function sendMatchQueueJoin() {
+  const queue = state.matchQueue;
+  if (!queue || !matchSocket || matchSocket.readyState !== WebSocket.OPEN) return;
+  matchSocket.send(JSON.stringify({ t: "queue", mode: queue.mode, map: queue.map }));
 }
 
 function handleMatchMessage(msg) {
   if (msg.t === "error") {
     state.matchQueue = { ...state.matchQueue, status: msg.text };
     updateQueueDom();
+  } else if (msg.t === "hello-ok") {
+    if (state.screen === "queue" && state.matchQueue) {
+      state.matchQueue = { ...state.matchQueue, status: "Joining queue..." };
+      updateQueueDom();
+      sendMatchQueueJoin();
+    }
   } else if (msg.t === "queue") {
     state.matchQueue = {
       ...state.matchQueue,
@@ -3520,11 +3533,15 @@ app.addEventListener("click", (event) => {
   }
 
   if (action === "play-bots") {
-    if (matchSocket && matchSocket.readyState === WebSocket.OPEN) {
-      matchSocket.send(JSON.stringify({ t: "playBots" }));
-      state.matchQueue = { ...state.matchQueue, status: "Starting a bot match..." };
+    if (!matchSocket || matchSocket.readyState !== WebSocket.OPEN) {
+      state.matchQueue = { ...state.matchQueue, status: "Not connected. Leave and try again." };
       updateQueueDom();
+      return;
     }
+    sendMatchQueueJoin();
+    matchSocket.send(JSON.stringify({ t: "playBots" }));
+    state.matchQueue = { ...state.matchQueue, status: "Starting a bot match..." };
+    updateQueueDom();
     return;
   }
 
