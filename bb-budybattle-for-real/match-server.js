@@ -694,8 +694,10 @@ class Match {
     const waterSurface = Math.max(hazard.waterLevel || 0, 0);
     const inHazard = (x, z, y, fireResist) => {
       const ground = mapGen.terrainHeight(this.map, x, z);
-      const flooded = ground < hazard.waterLevel - 0.3 || ground < -0.3;
-      if (flooded && y < waterSurface + 0.8) return { dps: mapGen.WATER_DPS, cause: "Drowned" };
+      if (waterSurface > 0) {
+        const submerged = y < waterSurface + 0.55 || ground < waterSurface + 0.35;
+        if (submerged) return { dps: mapGen.WATER_DPS, cause: "Drowned" };
+      }
       if (hazard.lavaRadius && Math.hypot(x, z) < hazard.lavaRadius && !fireResist && y < ground + 1.5) {
         return { dps: mapGen.LAVA_DPS, cause: "Lava" };
       }
