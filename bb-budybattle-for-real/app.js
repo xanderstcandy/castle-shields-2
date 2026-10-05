@@ -1969,15 +1969,37 @@ function renderBattleMenu() {
   `));
 }
 
+function gearSkinLookButton(skinId) {
+  const entry = findSkin(skinId);
+  if (!entry) return "";
+  const active = state.equippedSkin === skinId;
+  return `
+    <button
+      type="button"
+      class="gear-avatar-btn gear-avatar-btn--skin gear-skin-${entry.rarity}${active ? " active" : ""}"
+      data-action="wear-skin"
+      data-skin="${skinId}"
+      aria-pressed="${active}"
+      aria-label="Wear ${escapeHtml(entry.name)}"
+    >
+      ${window.BBBuddyPreview
+        ? `<img class="gear-avatar-3d" src="${window.BBBuddyPreview.snapshot(state.avatar, 160, skinId)}" alt="" draggable="false">`
+        : `<span class="gear-skin-swatch" style="background:linear-gradient(160deg, ${entry.outfit}, ${entry.accent})"></span>`}
+      <span class="gear-avatar-skin-name">${escapeHtml(entry.name)}</span>
+    </button>
+  `;
+}
+
 function gearAvatarButton(avatarId) {
-  const active = state.avatar === avatarId ? " active" : "";
+  const selected = state.avatar === avatarId && !state.equippedSkin;
+  const active = selected ? " active" : "";
   return `
     <button
       type="button"
       class="gear-avatar-btn${active}"
       data-action="pick-avatar"
       data-avatar="${avatarId}"
-      aria-pressed="${state.avatar === avatarId}"
+      aria-pressed="${selected}"
       aria-label="Choose buddy look ${avatarId}"
     >
       ${window.BBBuddyPreview
@@ -2274,6 +2296,7 @@ function renderGear() {
         ${gearAvatarButton("girl-1")}
         ${gearAvatarButton("girl-2")}
         ${gearAvatarButton("girl-3")}
+        ${state.ownedSkins.length ? `<p class="gear-picker-label">Your skins</p>${state.ownedSkins.map(gearSkinLookButton).join("")}` : ""}
         <p class="gear-scroll-hint">Scroll for all looks</p>
       </aside>
       <span class="gear-rail" aria-hidden="true"><span class="gear-rail-thumb" data-gear-thumb></span></span>
@@ -3392,6 +3415,22 @@ app.addEventListener("click", (event) => {
     if (!AVATAR_IDS.includes(avatarId)) return;
     state.avatar = avatarId;
     writeAvatar(avatarId);
+    state.skinTryOn = "";
+    if (state.equippedSkin) {
+      state.equippedSkin = "";
+      persistShopInventory();
+    }
+    render();
+    return;
+  }
+
+  if (action === "wear-skin") {
+    const skinId = actionTarget.dataset.skin;
+    if (!state.ownedSkins.includes(skinId)) return;
+    state.equippedSkin = skinId;
+    state.skinTryOn = "";
+    state.gearNotice = `Wearing ${findSkin(skinId).name}.`;
+    persistShopInventory();
     render();
     return;
   }
