@@ -1981,7 +1981,7 @@ function gearAvatarButton(avatarId) {
       aria-label="Choose buddy look ${avatarId}"
     >
       ${window.BBBuddyPreview
-        ? `<img class="gear-avatar-3d" src="${window.BBBuddyPreview.snapshot(avatarId, 160, state.equippedSkin)}" alt="" draggable="false">`
+        ? `<img class="gear-avatar-3d" src="${window.BBBuddyPreview.snapshot(avatarId)}" alt="" draggable="false">`
         : buddyAvatarSvg(avatarId, true)}
     </button>
   `;
