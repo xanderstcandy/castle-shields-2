@@ -410,6 +410,91 @@ const RANKED_STARS = {
   hardVolcano: [[1, 1, 125], [2, 2, 50], [3, 3, 25]]
 };
 
+const MATCH_DIAMOND_REWARDS = {
+  island: [[1, 1, 5], [2, 3, 2]],
+  volcano: [[1, 1, 10], [2, 3, 4], [4, 10, 1]],
+  hardVolcano: [[1, 1, 20], [2, 3, 8], [4, 10, 2]]
+};
+
+const SKIN_RARITIES = [
+  { id: "common", label: "Common", currency: "coins" },
+  { id: "rare", label: "Rare", currency: "coins" },
+  { id: "epic", label: "Epic", currency: "coins" },
+  { id: "legendary", label: "Legendary", currency: "diamonds" },
+  { id: "mythic", label: "Mythic", currency: "diamonds" }
+];
+
+function defineSkin(id, name, rarity, price, outfit, pants, shoe, accent, parts, extra = {}) {
+  return { id, name, rarity, price, outfit, pants, shoe, accent, parts, ...extra };
+}
+
+const SKIN_CATALOG = [
+  defineSkin("red-hoodie", "Red Hoodie", "common", 150, "#dc2626", "#1f2937", "#111827", "#f8fafc", ["cap"]),
+  defineSkin("forest-ranger", "Forest Ranger", "common", 150, "#3f6212", "#44403c", "#292524", "#a3e635", ["cap", "scarf"]),
+  defineSkin("beach-day", "Beach Day", "common", 175, "#facc15", "#0ea5e9", "#f8fafc", "#f97316", ["cap"]),
+  defineSkin("mint-fresh", "Mint Fresh", "common", 175, "#34d399", "#e2e8f0", "#f8fafc", "#065f46", ["scarf"]),
+  defineSkin("night-owl", "Night Owl", "common", 200, "#1e1b4b", "#0f172a", "#020617", "#a78bfa", ["scarf"]),
+  defineSkin("pumpkin-spice", "Pumpkin Spice", "common", 200, "#ea580c", "#78350f", "#451a03", "#fde68a", ["scarf", "cap"]),
+  defineSkin("sky-scout", "Sky Scout", "common", 200, "#7dd3fc", "#1e3a8a", "#0f172a", "#fbbf24", ["pack"]),
+  defineSkin("grape-soda", "Grape Soda", "common", 225, "#7e22ce", "#312e81", "#1e1b4b", "#f0abfc", ["cap"]),
+  defineSkin("lumberjack", "Lumberjack", "common", 225, "#b91c1c", "#1e3a8a", "#422006", "#111827", ["beard", "pack"]),
+  defineSkin("desert-nomad", "Desert Nomad", "common", 250, "#d6b98c", "#a16207", "#713f12", "#7c2d12", ["scarf", "mask"]),
+  defineSkin("bubblegum", "Bubblegum", "common", 250, "#f472b6", "#fbcfe8", "#f8fafc", "#ffffff", ["bunnyEars"]),
+  defineSkin("cocoa-cat", "Cocoa Cat", "common", 250, "#92400e", "#451a03", "#1c1917", "#fcd34d", ["catEars", "tail"]),
+
+  defineSkin("ninja-shadow", "Ninja Shadow", "rare", 400, "#111827", "#0b0f19", "#030712", "#ef4444", ["mask", "belt", "hood"]),
+  defineSkin("pirate-captain", "Pirate Captain", "rare", 450, "#7f1d1d", "#1f2937", "#111827", "#facc15", ["tophat", "belt", "beard"], { hatColor: "#111827" }),
+  defineSkin("master-chef", "Master Chef", "rare", 450, "#f8fafc", "#1f2937", "#111827", "#ef4444", ["tophat", "scarf"], { hatColor: "#ffffff" }),
+  defineSkin("firefighter", "Firefighter", "rare", 500, "#b45309", "#78350f", "#111827", "#facc15", ["helmet", "belt", "pack"], { helmetColor: "#dc2626" }),
+  defineSkin("space-cadet", "Space Cadet", "rare", 550, "#f1f5f9", "#cbd5e1", "#475569", "#38bdf8", ["helmet", "visor", "jetpack"], { helmetColor: "#f8fafc" }),
+  defineSkin("street-racer", "Street Racer", "rare", 550, "#2563eb", "#111827", "#f8fafc", "#facc15", ["helmet", "visor"], { helmetColor: "#facc15" }),
+  defineSkin("cowpoke", "Cowpoke", "rare", 600, "#a16207", "#1e3a8a", "#422006", "#fde68a", ["wideHat", "scarf", "belt"]),
+  defineSkin("samurai", "Samurai", "rare", 650, "#991b1b", "#111827", "#030712", "#fbbf24", ["helmet", "shoulders", "belt"], { helmetColor: "#1f2937" }),
+  defineSkin("viking", "Viking", "rare", 700, "#57534e", "#44403c", "#292524", "#e7e5e4", ["helmet", "horns", "beard"], { helmetColor: "#78716c" }),
+  defineSkin("hacker", "Hacker", "rare", 700, "#0f172a", "#020617", "#020617", "#22c55e", ["hood", "visor"], { glow: "#22c55e" }),
+
+  defineSkin("cyber-knight", "Cyber Knight", "epic", 900, "#0e7490", "#164e63", "#082f49", "#67e8f9", ["helmet", "visor", "shoulders"], { glow: "#22d3ee", helmetColor: "#0f172a" }),
+  defineSkin("royal-prince", "Royal Prince", "epic", 1000, "#1d4ed8", "#f8fafc", "#1e293b", "#facc15", ["crown", "cape", "belt"], { capeColor: "#b91c1c" }),
+  defineSkin("jungle-raptor", "Jungle Raptor", "epic", 1100, "#15803d", "#14532d", "#052e16", "#fde047", ["tail", "mohawk", "hood"], { body: "#16a34a" }),
+  defineSkin("frost-guard", "Frost Guard", "epic", 1200, "#bae6fd", "#e0f2fe", "#0c4a6e", "#38bdf8", ["shoulders", "cape", "helmet"], { glow: "#7dd3fc", helmetColor: "#e0f2fe" }),
+  defineSkin("neon-runner", "Neon Runner", "epic", 1250, "#db2777", "#111827", "#f9a8d4", "#f0abfc", ["visor", "mohawk"], { glow: "#ec4899" }),
+  defineSkin("stealth-ops", "Stealth Ops", "epic", 1300, "#3f3f46", "#27272a", "#09090b", "#84cc16", ["mask", "visor", "jetpack", "belt"], { glow: "#84cc16" }),
+  defineSkin("arcane-mage", "Arcane Mage", "epic", 1400, "#6d28d9", "#4c1d95", "#2e1065", "#fbbf24", ["wizardHat", "cape", "beard"], { glow: "#a78bfa", capeColor: "#312e81" }),
+  defineSkin("thunder-striker", "Thunder Striker", "epic", 1500, "#1e293b", "#0f172a", "#facc15", "#fde047", ["mohawk", "shoulders", "visor"], { glow: "#facc15" }),
+
+  defineSkin("dragon-lord", "Dragon Lord", "legendary", 30, "#7f1d1d", "#450a0a", "#1c1917", "#f97316", ["horns", "wings", "tail", "cape"], { glow: "#f97316", capeColor: "#450a0a" }),
+  defineSkin("galaxy-walker", "Galaxy Walker", "legendary", 35, "#1e1b4b", "#172554", "#020617", "#c084fc", ["helmet", "visor", "jetpack"], { glow: "#a855f7", helmetColor: "#312e81" }),
+  defineSkin("golden-champion", "Golden Champion", "legendary", 40, "#eab308", "#ca8a04", "#a16207", "#fef08a", ["crown", "cape", "shoulders"], { body: "#facc15", hair: "#fde047", glow: "#facc15", capeColor: "#7f1d1d" }),
+  defineSkin("phantom", "Phantom", "legendary", 40, "#e2e8f0", "#cbd5e1", "#94a3b8", "#a5f3fc", ["hood", "cape", "mask"], { body: "#f1f5f9", glow: "#a5f3fc", capeColor: "#e2e8f0" }),
+  defineSkin("mecha-pilot", "Mecha Pilot", "legendary", 45, "#f97316", "#334155", "#0f172a", "#38bdf8", ["helmet", "visor", "jetpack", "shoulders"], { glow: "#38bdf8", helmetColor: "#f8fafc" }),
+  defineSkin("inferno", "Inferno", "legendary", 50, "#9a3412", "#1c1917", "#0c0a09", "#fb923c", ["horns", "mohawk", "shoulders"], { glow: "#f97316", hair: "#f97316" }),
+  defineSkin("ice-monarch", "Ice Monarch", "legendary", 50, "#e0f2fe", "#bae6fd", "#7dd3fc", "#38bdf8", ["crown", "cape"], { glow: "#7dd3fc", hair: "#f0f9ff", capeColor: "#7dd3fc", crownColor: "#bae6fd" }),
+  defineSkin("shadow-reaper", "Shadow Reaper", "legendary", 55, "#09090b", "#09090b", "#000000", "#a855f7", ["hood", "cape", "mask"], { glow: "#9333ea", capeColor: "#18181b" }),
+  defineSkin("angel", "Angel", "legendary", 60, "#f8fafc", "#f1f5f9", "#e2e8f0", "#fde68a", ["halo", "wings"], { glow: "#fde68a", wingColor: "#ffffff" }),
+  defineSkin("demon", "Demon", "legendary", 60, "#450a0a", "#1c1917", "#0c0a09", "#ef4444", ["horns", "wings", "tail"], { body: "#b91c1c", glow: "#ef4444", wingColor: "#1c1917" }),
+  defineSkin("lava-golem", "Lava Golem", "legendary", 65, "#292524", "#1c1917", "#0c0a09", "#f97316", ["shoulders", "mohawk"], { body: "#44403c", hair: "#f97316", glow: "#ea580c" }),
+  defineSkin("robo-bud", "Robo-Bud", "legendary", 70, "#94a3b8", "#64748b", "#334155", "#22d3ee", ["antenna", "visor", "shoulders"], { body: "#cbd5e1", hair: "#94a3b8", glow: "#22d3ee" }),
+
+  defineSkin("cosmic-emperor", "Cosmic Emperor", "mythic", 100, "#312e81", "#1e1b4b", "#0f172a", "#fbbf24", ["crown", "cape", "halo", "shoulders"], { glow: "#818cf8", capeColor: "#4c1d95" }),
+  defineSkin("void-walker", "Void Walker", "mythic", 120, "#020617", "#020617", "#000000", "#8b5cf6", ["wings", "halo", "hood"], { body: "#1e1b4b", glow: "#7c3aed", wingColor: "#0f0a1f" }),
+  defineSkin("diamond-titan", "Diamond Titan", "mythic", 140, "#67e8f9", "#22d3ee", "#0e7490", "#ecfeff", ["crown", "shoulders", "cape"], { body: "#a5f3fc", hair: "#ecfeff", glow: "#22d3ee", capeColor: "#0891b2", crownColor: "#ecfeff" }),
+  defineSkin("solar-phoenix", "Solar Phoenix", "mythic", 150, "#f97316", "#b45309", "#7c2d12", "#fde047", ["wings", "tail", "crown"], { glow: "#fb923c", hair: "#fde047", wingColor: "#f97316" }),
+  defineSkin("neon-dragon", "Neon Dragon", "mythic", 160, "#0f172a", "#020617", "#000000", "#22d3ee", ["horns", "wings", "tail", "visor"], { glow: "#06b6d4", wingColor: "#0e7490" }),
+  defineSkin("prism-legend", "Prism Legend", "mythic", 175, "#f0abfc", "#a5b4fc", "#e0e7ff", "#ffffff", ["halo", "cape", "wings"], { glow: "#e879f9", rainbow: true, wingColor: "#c4b5fd", capeColor: "#f472b6" }),
+  defineSkin("eternal-king", "Eternal King", "mythic", 190, "#7f1d1d", "#1c1917", "#facc15", "#facc15", ["crown", "cape", "shoulders", "beard"], { glow: "#facc15", capeColor: "#991b1b" }),
+  defineSkin("budybattle-legend", "BudyBattle Legend", "mythic", 200, "#0ea5e9", "#1e3a8a", "#facc15", "#facc15", ["crown", "wings", "halo", "cape", "shoulders"], { glow: "#38bdf8", rainbow: true, wingColor: "#fde68a", capeColor: "#1d4ed8" })
+];
+
+const SKIN_IDS = SKIN_CATALOG.map((entry) => entry.id);
+
+function findSkin(id) {
+  return SKIN_CATALOG.find((entry) => entry.id === id) || null;
+}
+
+function skinCurrency(entry) {
+  return SKIN_RARITIES.find((rarity) => rarity.id === entry.rarity)?.currency || "coins";
+}
+
 function getPlacementReward(table, map, place) {
   const row = (table[map] || []).find(([from, to]) => place >= from && place <= to);
   return row ? row[2] : 0;
@@ -453,6 +538,12 @@ if (typeof module !== "undefined") {
     MATCH_KILL_COINS,
     COMPETITIVE_PAYOUTS,
     RANKED_STARS,
+    MATCH_DIAMOND_REWARDS,
+    SKIN_RARITIES,
+    SKIN_CATALOG,
+    SKIN_IDS,
+    findSkin,
+    skinCurrency,
     getPlacementReward,
     getWeaponRanged,
     isPotionName

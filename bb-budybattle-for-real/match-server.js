@@ -71,7 +71,8 @@ function sanitizeLoadout(loadout) {
     : [];
   const potion = data.isPotionName(loadout?.potion) ? loadout.potion : "";
   const bb = BB_CATALOG.find((entry) => entry.name === loadout?.bb) ? loadout.bb : "";
-  return { weapons, potion, bb };
+  const skin = data.SKIN_IDS.includes(loadout?.skin) ? loadout.skin : "";
+  return { weapons, potion, bb, skin };
 }
 
 class Match {
@@ -108,10 +109,11 @@ class Match {
       usedNames.add(name);
       const weapons = this.rand() < 0.6 ? [BOT_START_WEAPONS[Math.floor(this.rand() * BOT_START_WEAPONS.length)]] : [];
       const bb = this.rand() < 0.3 ? COMMON_BBS[Math.floor(this.rand() * COMMON_BBS.length)].name : "";
-      this.addPlayer(name, AVATAR_IDS[Math.floor(this.rand() * AVATAR_IDS.length)], { weapons, potion: "", bb }, null);
+      const skin = this.rand() < 0.35 ? data.SKIN_IDS[Math.floor(this.rand() * data.SKIN_IDS.length)] : "";
+      this.addPlayer(name, AVATAR_IDS[Math.floor(this.rand() * AVATAR_IDS.length)], { weapons, potion: "", bb, skin }, null);
     }
 
-    const roster = this.players.map((p) => ({ id: p.id, name: p.name, avatar: p.avatar, bot: !p.ws }));
+    const roster = this.players.map((p) => ({ id: p.id, name: p.name, avatar: p.avatar, skin: p.skin, bot: !p.ws }));
     this.players.forEach((p) => {
       if (!p.ws) return;
       send(p.ws, {
@@ -142,6 +144,7 @@ class Match {
       id: this.nextId++,
       name,
       avatar: AVATAR_IDS.includes(avatar) ? avatar : "boy-1",
+      skin: clean.skin,
       ws,
       x: spot.x,
       z: spot.z,
@@ -355,7 +358,8 @@ class Match {
       killedBy,
       mode: this.mode,
       map: this.mapId,
-      reward
+      reward,
+      diamonds: data.getPlacementReward(data.MATCH_DIAMOND_REWARDS, this.mapId, p.place)
     });
     p.ws.matchPlayer = null;
   }
@@ -384,7 +388,7 @@ class Match {
     p.disconnectedAt = 0;
     conn.match = this;
     conn.ws.matchPlayer = p;
-    const roster = this.players.map((entry) => ({ id: entry.id, name: entry.name, avatar: entry.avatar, bot: Boolean(entry.bot) }));
+    const roster = this.players.map((entry) => ({ id: entry.id, name: entry.name, avatar: entry.avatar, skin: entry.skin, bot: Boolean(entry.bot) }));
     send(conn.ws, {
       t: "start",
       matchId: this.id,

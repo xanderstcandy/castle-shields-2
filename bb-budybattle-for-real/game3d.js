@@ -111,14 +111,24 @@ function heldItemMesh(name) {
   return group;
 }
 
-function buildBuddy(avatar) {
+function buildBuddy(avatar, skinId) {
   const look = AVATAR_LOOKS[avatar] || AVATAR_LOOKS["boy-1"];
-  const mat = (color) => new THREE.MeshLambertMaterial({ color });
-  const skin = mat(look.skin[0]);
-  const hair = mat(look.hair[0]);
-  const shirt = mat(look.outfit[0]);
-  const pants = mat(look.pants[0]);
-  const shoe = mat(look.shoe);
+  const outfit = skinId ? findSkin(skinId) : null;
+  const materials = [];
+  const mat = (color, glow = 0, glowColor = outfit?.glow) => {
+    const material = new THREE.MeshLambertMaterial({ color });
+    if (glow && glowColor) {
+      material.userData.glow = new THREE.Color(glowColor).multiplyScalar(glow).getHex();
+      material.emissive.setHex(material.userData.glow);
+    }
+    materials.push(material);
+    return material;
+  };
+  const skin = mat(outfit?.body || look.skin[0], outfit?.body ? 0.12 : 0);
+  const hair = mat(outfit?.hair || look.hair[0], outfit?.hair ? 0.25 : 0);
+  const shirt = mat(outfit?.outfit || look.outfit[0], 0.22);
+  const pants = mat(outfit?.pants || look.pants[0], 0.1);
+  const shoe = mat(outfit?.shoe || look.shoe);
   const group = new THREE.Group();
   const box = (w, h, d, material) => {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
@@ -178,7 +188,168 @@ function buildBuddy(avatar) {
   const hand = new THREE.Group();
   hand.position.set(0, -0.66, 0.05);
   arms[1].add(hand);
-  return { group, legs, arms, hand, stun, materials: [skin, hair, shirt, pants, shoe] };
+  const extras = outfit ? addSkinParts(group, outfit, { box, mat, head, arms, hairParts: [hairTop, hairBack] }) : { tick: null };
+  return { group, legs, arms, hand, stun, materials, tick: extras.tick };
+}
+
+function addSkinParts(group, outfit, { box, mat, arms, hairParts }) {
+  const accent = mat(outfit.accent, 0.8, outfit.glow || outfit.accent);
+  const accentFlat = mat(outfit.accent);
+  const gold = mat(outfit.crownColor || "#facc15", 0.35, outfit.crownColor || "#facc15");
+  const dark = mat("#111827");
+  const helmetMat = mat(outfit.helmetColor || outfit.accent, 0.15);
+  const capeMat = mat(outfit.capeColor || outfit.accent, 0.2);
+  const wingMat = mat(outfit.wingColor || outfit.accent, 0.35);
+  const hatMat = mat(outfit.hatColor || outfit.outfit);
+  const animated = [];
+  const add = (mesh, x, y, z, parent = group) => {
+    mesh.position.set(x, y, z);
+    parent.add(mesh);
+    return mesh;
+  };
+  const hideHair = () => hairParts.forEach((part) => { part.visible = false; });
+
+  outfit.parts.forEach((part) => {
+    if (part === "cap") {
+      add(box(0.5, 0.12, 0.48, accentFlat), 0, 2.08, 0);
+      add(box(0.44, 0.04, 0.22, accentFlat), 0, 2.03, 0.32);
+    } else if (part === "scarf") {
+      add(box(0.52, 0.12, 0.38, accentFlat), 0, 1.53, 0);
+      add(box(0.12, 0.3, 0.06, accentFlat), 0.14, 1.38, 0.2);
+    } else if (part === "pack") {
+      add(box(0.44, 0.5, 0.18, accentFlat), 0, 1.2, -0.26);
+    } else if (part === "beard") {
+      add(box(0.44, 0.18, 0.08, mat(outfit.hair || "#5b3a1e")), 0, 1.62, 0.22);
+    } else if (part === "mask") {
+      add(box(0.48, 0.18, 0.06, dark), 0, 1.66, 0.23);
+    } else if (part === "bunnyEars") {
+      [-0.11, 0.11].forEach((x) => {
+        const ear = add(box(0.09, 0.36, 0.05, accentFlat), x, 2.24, 0);
+        ear.rotation.z = x < 0 ? 0.15 : -0.15;
+      });
+    } else if (part === "catEars") {
+      [-0.15, 0.15].forEach((x) => {
+        const ear = add(box(0.12, 0.14, 0.06, mat(outfit.outfit)), x, 2.1, 0.02);
+        ear.rotation.z = Math.PI / 4;
+      });
+    } else if (part === "tail") {
+      const tail = new THREE.Group();
+      tail.position.set(0, 0.9, -0.18);
+      [0, 1, 2, 3].forEach((i) => {
+        const size = 0.18 - i * 0.03;
+        const segment = box(size, size, 0.22, i === 3 ? accent : mat(outfit.body || outfit.outfit, 0.15));
+        segment.position.set(0, -0.06 * i, -0.18 * i - 0.1);
+        tail.add(segment);
+      });
+      tail.rotation.x = 0.35;
+      group.add(tail);
+      animated.push((now) => { tail.rotation.y = Math.sin(now / 260) * 0.35; });
+    } else if (part === "belt") {
+      add(box(0.66, 0.08, 0.38, dark), 0, 0.88, 0);
+      add(box(0.12, 0.1, 0.04, gold), 0, 0.88, 0.19);
+    } else if (part === "hood") {
+      add(box(0.54, 0.12, 0.52, mat(outfit.outfit, 0.15)), 0, 2.06, -0.01);
+      add(box(0.54, 0.5, 0.1, mat(outfit.outfit, 0.15)), 0, 1.8, -0.25);
+      [-0.26, 0.26].forEach((x) => add(box(0.04, 0.5, 0.48, mat(outfit.outfit, 0.15)), x, 1.8, 0));
+      hideHair();
+    } else if (part === "tophat") {
+      add(box(0.6, 0.04, 0.58, hatMat), 0, 2.03, 0);
+      add(box(0.4, 0.36, 0.4, hatMat), 0, 2.23, 0);
+      add(box(0.41, 0.06, 0.41, accentFlat), 0, 2.08, 0);
+      hideHair();
+    } else if (part === "wideHat") {
+      const leather = mat("#78350f");
+      add(box(0.86, 0.04, 0.8, leather), 0, 2.04, 0);
+      add(box(0.44, 0.2, 0.42, leather), 0, 2.15, 0);
+      add(box(0.45, 0.05, 0.43, accentFlat), 0, 2.08, 0);
+      hideHair();
+    } else if (part === "wizardHat") {
+      add(box(0.7, 0.04, 0.68, capeMat), 0, 2.03, 0);
+      const cone = add(new THREE.Mesh(new THREE.ConeGeometry(0.26, 0.62, 4), capeMat), 0, 2.36, 0);
+      cone.rotation.y = Math.PI / 4;
+      add(box(0.08, 0.08, 0.08, accent), 0, 2.68, 0);
+      hideHair();
+    } else if (part === "helmet") {
+      add(box(0.54, 0.22, 0.52, helmetMat), 0, 2.03, 0);
+      add(box(0.54, 0.4, 0.08, helmetMat), 0, 1.82, -0.24);
+      [-0.27, 0.27].forEach((x) => add(box(0.05, 0.36, 0.46, helmetMat), x, 1.84, 0));
+      hideHair();
+    } else if (part === "visor") {
+      add(box(0.5, 0.11, 0.05, accent), 0, 1.8, 0.24);
+    } else if (part === "jetpack") {
+      [-0.12, 0.12].forEach((x) => {
+        add(box(0.18, 0.5, 0.18, mat("#94a3b8")), x, 1.2, -0.27);
+        const flame = add(new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.24, 6), accent), x, 0.86, -0.27);
+        flame.rotation.x = Math.PI;
+        animated.push((now) => { flame.scale.y = 0.75 + Math.abs(Math.sin(now / 70 + x * 9)) * 0.5; });
+      });
+    } else if (part === "shoulders") {
+      arms.forEach((arm, index) => {
+        const pad = box(0.28, 0.14, 0.3, accent);
+        pad.position.set(index === 0 ? -0.03 : 0.03, 0.03, 0);
+        pad.rotation.z = index === 0 ? 0.2 : -0.2;
+        arm.add(pad);
+      });
+    } else if (part === "horns") {
+      [-1, 1].forEach((side) => {
+        const horn = add(new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.3, 6), mat("#f5f5f4", 0.2, outfit.glow)), side * 0.2, 2.18, 0);
+        horn.rotation.z = -side * 0.5;
+      });
+    } else if (part === "crown") {
+      add(box(0.44, 0.1, 0.42, gold), 0, 2.13, 0);
+      [[-0.17, -0.17], [0.17, -0.17], [-0.17, 0.17], [0.17, 0.17], [0, 0.18]].forEach(([x, z]) => add(box(0.07, 0.12, 0.07, gold), x, 2.24, z));
+      add(box(0.08, 0.08, 0.04, accent), 0, 2.14, 0.22);
+    } else if (part === "cape") {
+      const cape = new THREE.Group();
+      cape.position.set(0, 1.5, -0.2);
+      const cloth = box(0.64, 1.2, 0.04, capeMat);
+      cloth.position.set(0, -0.58, 0);
+      cape.add(cloth);
+      cape.rotation.x = 0.12;
+      group.add(cape);
+      animated.push((now) => { cape.rotation.x = 0.12 + Math.sin(now / 420) * 0.06; });
+    } else if (part === "mohawk") {
+      [-0.12, 0, 0.12].forEach((z, i) => add(box(0.08, 0.22 - i * 0.03, 0.12, mat(outfit.hair || outfit.accent, 0.5, outfit.glow || outfit.accent)), 0, 2.14, z * -1 + 0.02));
+    } else if (part === "wings") {
+      [-1, 1].forEach((side) => {
+        const pivot = new THREE.Group();
+        pivot.position.set(side * 0.12, 1.36, -0.2);
+        const upper = box(0.7, 0.4, 0.04, wingMat);
+        upper.position.set(side * 0.38, 0.12, 0);
+        const lower = box(0.46, 0.3, 0.04, wingMat);
+        lower.position.set(side * 0.32, -0.22, 0);
+        const tip = box(0.18, 0.18, 0.05, accent);
+        tip.position.set(side * 0.72, 0.28, 0);
+        pivot.add(upper, lower, tip);
+        pivot.rotation.y = side * 0.45;
+        group.add(pivot);
+        animated.push((now) => { pivot.rotation.y = side * (0.45 + Math.sin(now / 300) * 0.18); });
+      });
+    } else if (part === "halo") {
+      const halo = add(new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.03, 8, 24), mat("#fde68a", 1, "#fde68a")), 0, 2.36, 0);
+      halo.rotation.x = Math.PI / 2;
+      animated.push((now) => { halo.position.y = 2.36 + Math.sin(now / 380) * 0.04; });
+    } else if (part === "antenna") {
+      add(box(0.03, 0.26, 0.03, mat("#64748b")), 0.12, 2.18, 0);
+      add(new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 8), accent), 0.12, 2.33, 0);
+    }
+  });
+
+  if (outfit.rainbow) {
+    const shimmer = [accent, wingMat, capeMat];
+    const color = new THREE.Color();
+    animated.push((now) => {
+      const hue = (now / 4000) % 1;
+      shimmer.forEach((material, index) => {
+        color.setHSL((hue + index * 0.18) % 1, 0.85, 0.62);
+        material.color.copy(color);
+        material.userData.glow = color.clone().multiplyScalar(0.45).getHex();
+        material.emissive.setHex(material.userData.glow);
+      });
+    });
+  }
+
+  return { tick: animated.length ? (now) => animated.forEach((step) => step(now)) : null };
 }
 
 function lerpAngle(a, b, t) {
@@ -583,7 +754,7 @@ function createGame({ root, socket, start }) {
   function ensurePlayer(id) {
     if (g.players.has(id)) return g.players.get(id);
     const info = roster.get(id) || { name: "Buddy", avatar: "boy-1" };
-    const buddy = buildBuddy(info.avatar);
+    const buddy = buildBuddy(info.avatar, info.skin);
     const tag = makeTextSprite(info.name, id === g.myId ? "#86efac" : info.bot ? "#e2e8f0" : "#7dd3fc");
     tag.position.y = 2.75;
     tag.visible = id !== g.myId;
@@ -958,7 +1129,8 @@ function createGame({ root, socket, start }) {
         entry.tag.userData.draw(row[5] / row[6]);
       }
       const flash = now < entry.flashUntil;
-      entry.materials.forEach((material) => material.emissive.setHex(flash ? 0x991b1b : 0x000000));
+      if (entry.tick) entry.tick(now);
+      entry.materials.forEach((material) => material.emissive.setHex(flash ? 0x991b1b : material.userData.glow || 0));
     });
 
     g.bbs.forEach((entry, id) => {
@@ -1306,8 +1478,8 @@ function makePreviewScene() {
   return { scene, floor };
 }
 
-function buildPreviewBuddy(avatar, weapons) {
-  const buddy = buildBuddy(avatar);
+function buildPreviewBuddy(avatar, weapons, skinId) {
+  const buddy = buildBuddy(avatar, skinId);
   buddy.stun.visible = false;
   const [first, second] = weapons || [];
   const right = heldItemMesh(first);
@@ -1340,24 +1512,54 @@ function frameCamera(camera, height, width) {
 let snapshotRig = null;
 const snapshotCache = new Map();
 
-function buddySnapshot(avatar, size = 160) {
-  const key = `${avatar}:${size}`;
-  if (snapshotCache.has(key)) return snapshotCache.get(key);
+function getSnapshotRig() {
   if (!snapshotRig) {
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
     renderer.setPixelRatio(1);
     const camera = new THREE.PerspectiveCamera(30, 4 / 5, 0.1, 50);
     snapshotRig = { renderer, camera, ...makePreviewScene() };
   }
-  const { renderer, camera, scene, floor } = snapshotRig;
+  return snapshotRig;
+}
+
+function buddyPortrait(avatar, skinId = "", size = 192) {
+  const key = `portrait:${avatar}:${size}:${skinId}`;
+  if (snapshotCache.has(key)) return snapshotCache.get(key);
+  const { renderer, camera, scene, floor } = getSnapshotRig();
+  renderer.setSize(size, size, false);
+  camera.aspect = 1;
+  camera.updateProjectionMatrix();
+  const buddy = buildPreviewBuddy(avatar, [], skinId);
+  buddy.group.rotation.y = -0.3;
+  if (buddy.tick) buddy.tick(1200);
+  scene.add(buddy.group);
+  floor.visible = false;
+  camera.position.set(0, 1.82, 2.4);
+  camera.lookAt(0, 1.74, 0);
+  renderer.render(scene, camera);
+  const url = renderer.domElement.toDataURL("image/png");
+  floor.visible = true;
+  scene.remove(buddy.group);
+  disposeObject(buddy.group);
+  snapshotCache.set(key, url);
+  return url;
+}
+
+function buddySnapshot(avatar, size = 160, skinId = "") {
+  const key = `${avatar}:${size}:${skinId}`;
+  if (snapshotCache.has(key)) return snapshotCache.get(key);
+  const { renderer, camera, scene, floor } = getSnapshotRig();
   renderer.setSize(Math.round(size * 0.8), size, false);
-  const buddy = buildPreviewBuddy(avatar, []);
+  camera.aspect = 4 / 5;
+  camera.updateProjectionMatrix();
+  const buddy = buildPreviewBuddy(avatar, [], skinId);
   buddy.group.rotation.y = -0.35;
   buddy.arms[0].rotation.x = 0.12;
   buddy.arms[1].rotation.x = -0.12;
+  if (buddy.tick) buddy.tick(1200);
   scene.add(buddy.group);
   floor.scale.setScalar(0.55);
-  frameCamera(camera, 2.2, 1);
+  frameCamera(camera, skinId ? 2.55 : 2.2, skinId ? 1.5 : 1);
   renderer.render(scene, camera);
   const url = renderer.domElement.toDataURL("image/png");
   scene.remove(buddy.group);
@@ -1376,22 +1578,24 @@ function mountBuddyPreview(container, opts) {
   const stage = new THREE.Group();
   scene.add(stage);
 
-  const view = { avatar: "", weapons: "", bb: "", yaw: 0, shownYaw: 0, buddy: null, bbModel: null, height: 2.2, width: 1 };
+  const view = { avatar: "", weapons: "", skin: "", bb: "", yaw: 0, shownYaw: 0, buddy: null, bbModel: null, height: 2.2, width: 1 };
   let raf = 0;
   let disposed = false;
 
   function rebuild(next) {
     const weaponsKey = JSON.stringify(next.weapons || []);
     const bbName = next.bb || "";
-    if (next.avatar !== view.avatar || weaponsKey !== view.weapons) {
+    const skinId = next.skin || "";
+    if (next.avatar !== view.avatar || weaponsKey !== view.weapons || skinId !== view.skin) {
       if (view.buddy) {
         stage.remove(view.buddy.group);
         disposeObject(view.buddy.group);
       }
-      view.buddy = buildPreviewBuddy(next.avatar, next.weapons);
+      view.buddy = buildPreviewBuddy(next.avatar, next.weapons, skinId);
       stage.add(view.buddy.group);
       view.avatar = next.avatar;
       view.weapons = weaponsKey;
+      view.skin = skinId;
     }
     if (bbName !== view.bb) {
       if (view.bbModel) {
@@ -1413,12 +1617,12 @@ function mountBuddyPreview(container, opts) {
       view.buddy.group.position.x = -total / 2 + 0.45;
       bb.group.position.set(total / 2 - bb.radius, 0, -0.2);
       bb.group.rotation.y = -0.5;
-      view.height = Math.max(2.2, bb.height);
-      view.width = total + 0.6;
+      view.height = Math.max(2.6, bb.height);
+      view.width = total + 0.9;
     } else {
       view.buddy.group.position.x = 0;
-      view.height = 2.2;
-      view.width = 1.2;
+      view.height = view.skin ? 2.6 : 2.2;
+      view.width = view.skin ? 1.8 : 1.2;
     }
     floor.scale.setScalar(Math.max(0.7, view.width * 0.55));
     if (typeof next.yaw === "number") view.yaw = next.yaw;
@@ -1443,6 +1647,7 @@ function mountBuddyPreview(container, opts) {
       view.buddy.group.position.y = Math.abs(breathe) * 0.02;
       view.buddy.arms[0].rotation.x = 0.08 + breathe * 0.05;
       view.buddy.arms[1].rotation.x = -0.08 - breathe * 0.05;
+      if (view.buddy.tick) view.buddy.tick(now);
     }
     if (view.bbModel && view.bb && (BB_CATALOG.find((entry) => entry.name === view.bb)?.size || 1) < 1) {
       view.bbModel.group.position.y = Math.abs(Math.sin(now / 200)) * 0.06;
@@ -1460,7 +1665,7 @@ function mountBuddyPreview(container, opts) {
 
   return {
     update(next) {
-      rebuild({ avatar: view.avatar, weapons: JSON.parse(view.weapons), bb: view.bb, yaw: view.yaw, ...next });
+      rebuild({ avatar: view.avatar, weapons: JSON.parse(view.weapons), skin: view.skin, bb: view.bb, yaw: view.yaw, ...next });
       resize();
     },
     dispose() {
@@ -1476,5 +1681,5 @@ function mountBuddyPreview(container, opts) {
   };
 }
 
-window.BBBuddyPreview = { snapshot: buddySnapshot, mount: mountBuddyPreview };
+window.BBBuddyPreview = { snapshot: buddySnapshot, portrait: buddyPortrait, mount: mountBuddyPreview };
 window.dispatchEvent(new Event("bb3d-ready"));

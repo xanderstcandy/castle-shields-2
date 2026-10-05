@@ -51,6 +51,10 @@ const state = {
   ownedBbsOneGame: {},
   ownedBbsPermanent: [],
   equippedBb: "",
+  ownedSkins: [],
+  equippedSkin: "",
+  skinTryOn: "",
+  gearPanel: "items",
   bbsNotice: "",
   matchQueue: null,
   matchResult: null,
@@ -1266,7 +1270,46 @@ function readShopInventoryRecord(username) {
     : [];
   let equippedBb = typeof entry?.equippedBb === "string" ? entry.equippedBb : "";
   if (!(bbOneGame[equippedBb] > 0) && !bbPermanent.includes(equippedBb)) equippedBb = "";
-  return { oneGame, permanent, equipped, potions, potionsPermanent, equippedPotion, bbOneGame, bbPermanent, equippedBb };
+  const skins = Array.isArray(entry?.skins) ? entry.skins.filter((id) => SKIN_IDS.includes(id)) : [];
+  const equippedSkin = skins.includes(entry?.equippedSkin) ? entry.equippedSkin : "";
+  return { oneGame, permanent, equipped, potions, potionsPermanent, equippedPotion, bbOneGame, bbPermanent, equippedBb, skins, equippedSkin };
+}
+
+function buySkin(id) {
+  const entry = findSkin(id);
+  if (!entry) return;
+  if (state.ownedSkins.includes(id)) {
+    state.gearNotice = `You already own ${entry.name}.`;
+    return;
+  }
+  const currency = skinCurrency(entry);
+  const balance = currency === "diamonds" ? state.shopDiamonds : state.shopCoins;
+  if (balance < entry.price) {
+    state.gearNotice = `Not enough ${currency} for ${entry.name}.`;
+    return;
+  }
+  if (currency === "diamonds") state.shopDiamonds -= entry.price;
+  else state.shopCoins -= entry.price;
+  state.ownedSkins = [...state.ownedSkins, id];
+  state.equippedSkin = id;
+  state.skinTryOn = "";
+  persistShopWallet();
+  persistShopInventory();
+  state.gearNotice = `Unlocked and equipped ${entry.name}!`;
+}
+
+function toggleEquipSkin(id) {
+  const entry = findSkin(id);
+  if (!entry || !state.ownedSkins.includes(id)) return;
+  state.skinTryOn = "";
+  if (state.equippedSkin === id) {
+    state.equippedSkin = "";
+    state.gearNotice = `Unequipped ${entry.name}.`;
+  } else {
+    state.equippedSkin = id;
+    state.gearNotice = `Equipped ${entry.name}.`;
+  }
+  persistShopInventory();
 }
 
 function findBb(name) {
@@ -1399,6 +1442,8 @@ function syncShopWalletFromStorage() {
   state.ownedBbsOneGame = inventory.bbOneGame;
   state.ownedBbsPermanent = inventory.bbPermanent;
   state.equippedBb = inventory.equippedBb;
+  state.ownedSkins = inventory.skins;
+  state.equippedSkin = inventory.equippedSkin;
 }
 
 function persistShopWallet() {
@@ -1418,7 +1463,9 @@ function persistShopInventory() {
       equipped: state.equippedWeapons,
       bbOneGame: state.ownedBbsOneGame,
       bbPermanent: state.ownedBbsPermanent,
-      equippedBb: state.equippedBb
+      equippedBb: state.equippedBb,
+      skins: state.ownedSkins,
+      equippedSkin: state.equippedSkin
     };
     localStorage.setItem(SHOP_INVENTORY_KEY, JSON.stringify(store));
   } catch {
@@ -1678,7 +1725,7 @@ function reconnectMatchSocket() {
       username: state.username,
       password: state.password,
       avatar: state.avatar,
-      loadout: { weapons: state.equippedWeapons, potion: state.equippedPotion, bb: state.equippedBb }
+      loadout: { weapons: state.equippedWeapons, potion: state.equippedPotion, bb: state.equippedBb, skin: state.equippedSkin }
     }));
   };
   socket.onmessage = (event) => {
@@ -1781,7 +1828,7 @@ function joinMatchQueue(mode, map) {
       username: state.username,
       password: state.password,
       avatar: state.avatar,
-      loadout: { weapons: state.equippedWeapons, potion: state.equippedPotion, bb: state.equippedBb }
+      loadout: { weapons: state.equippedWeapons, potion: state.equippedPotion, bb: state.equippedBb, skin: state.equippedSkin }
     }));
     socket.send(JSON.stringify({ t: "queue", mode, map }));
   };
@@ -1829,9 +1876,10 @@ function handleMatchMessage(msg) {
 async function finishMatch(result) {
   if (window.BBGame) window.BBGame.stop();
   closeMatchSocket();
-  if (result.mode === "competitive" && result.reward > 0) {
+  if ((result.mode === "competitive" && result.reward > 0) || result.diamonds > 0) {
     syncShopWalletFromStorage();
-    state.shopCoins += result.reward;
+    if (result.mode === "competitive") state.shopCoins += result.reward;
+    state.shopDiamonds += result.diamonds || 0;
     persistShopWallet();
   }
   state.matchResult = result;
@@ -1880,9 +1928,10 @@ function renderMatch() {
 
 function renderMatchResult() {
   const result = state.matchResult;
-  const rewardLine = result.reward > 0
-    ? result.mode === "competitive" ? `+${result.reward} coins` : `+${formatStars(result.reward)}`
-    : "No reward this time";
+  const rewards = [];
+  if (result.reward > 0) rewards.push(result.mode === "competitive" ? `+${result.reward} coins` : `+${formatStars(result.reward)}`);
+  if (result.diamonds > 0) rewards.push(`+${result.diamonds} ${result.diamonds === 1 ? "diamond" : "diamonds"}`);
+  const rewardLine = rewards.length ? rewards.join(" · ") : "No reward this time";
   renderScene(renderCard(`
     <header class="drop-head hub-head">
       <div class="drop-crest">${crestSvg()}</div>
@@ -1932,7 +1981,7 @@ function gearAvatarButton(avatarId) {
       aria-label="Choose buddy look ${avatarId}"
     >
       ${window.BBBuddyPreview
-        ? `<img class="gear-avatar-3d" src="${window.BBBuddyPreview.snapshot(avatarId)}" alt="" draggable="false">`
+        ? `<img class="gear-avatar-3d" src="${window.BBBuddyPreview.snapshot(avatarId, 160, state.equippedSkin)}" alt="" draggable="false">`
         : buddyAvatarSvg(avatarId, true)}
     </button>
   `;
@@ -1947,7 +1996,56 @@ function disposeGearPreview3d() {
 }
 
 function gearPreviewOptions() {
-  return { avatar: state.avatar, weapons: state.equippedWeapons, bb: state.equippedBb, yaw: state.avatarYaw };
+  return { avatar: state.avatar, weapons: state.equippedWeapons, skin: state.skinTryOn || state.equippedSkin, bb: state.equippedBb, yaw: state.avatarYaw };
+}
+
+function renderSkinCard(entry) {
+  const owned = state.ownedSkins.includes(entry.id);
+  const equipped = state.equippedSkin === entry.id;
+  const trying = state.skinTryOn === entry.id;
+  const currency = skinCurrency(entry);
+  const balance = currency === "diamonds" ? state.shopDiamonds : state.shopCoins;
+  const art = window.BBBuddyPreview
+    ? `<img class="gear-skin-art" src="${window.BBBuddyPreview.snapshot(state.avatar, 150, entry.id)}" alt="" draggable="false">`
+    : `<span class="gear-skin-swatch" style="background:linear-gradient(160deg, ${entry.outfit}, ${entry.accent})"></span>`;
+  const action = owned
+    ? `<button type="button" class="gear-skin-btn${equipped ? " gear-skin-btn--equipped" : ""}" data-action="equip-skin" data-skin="${entry.id}">${equipped ? "Equipped" : "Equip"}</button>`
+    : `<button type="button" class="gear-skin-btn gear-skin-btn--buy gear-skin-btn--${currency}" data-action="buy-skin" data-skin="${entry.id}" ${balance < entry.price ? "disabled" : ""} aria-label="Buy ${escapeHtml(entry.name)} for ${entry.price} ${currency}">
+        ${currency === "diamonds" ? shopDiamondSvg() : shopCoinSvg()}<span>${escapeHtml(formatShopCoinAmount(entry.price))}</span>
+      </button>`;
+  return `
+    <li class="gear-skin-card gear-skin-${entry.rarity}${equipped ? " equipped" : ""}${trying ? " trying" : ""}">
+      <button type="button" class="gear-skin-try" data-action="try-skin" data-skin="${entry.id}" aria-label="Try on ${escapeHtml(entry.name)}">
+        ${art}
+        ${owned ? "" : `<span class="gear-skin-lock" aria-hidden="true">🔒</span>`}
+      </button>
+      <span class="gear-skin-name">${escapeHtml(entry.name)}</span>
+      ${action}
+    </li>
+  `;
+}
+
+function renderGearSkinsPanel() {
+  const tryOn = findSkin(state.skinTryOn);
+  return `
+    <section class="gear-skins-col" aria-label="Skins">
+      <header class="gear-skins-head">
+        <h2 class="gear-weapons-title gear-skins-title">Skins</h2>
+        <p class="gear-equip-count">Owned ${state.ownedSkins.length}/${SKIN_CATALOG.length} · tap a skin to try it on</p>
+        ${renderShopWalletBar()}
+        ${state.gearNotice ? `<p class="gear-equip-notice" role="status">${escapeHtml(state.gearNotice)}</p>` : ""}
+        ${tryOn ? `<p class="gear-skin-trying">Trying on <strong>${escapeHtml(tryOn.name)}</strong> · <button type="button" class="gear-skin-clear" data-action="try-skin" data-skin="">Stop</button></p>` : ""}
+      </header>
+      <div class="gear-skins-body">
+        ${SKIN_RARITIES.map((rarity) => `
+          <section class="gear-skin-section gear-skin-section--${rarity.id}">
+            <h3 class="gear-weapon-section-title">${escapeHtml(rarity.label)} · ${rarity.currency === "diamonds" ? "Diamonds" : "Coins"}</h3>
+            <ul class="gear-skin-grid">${SKIN_CATALOG.filter((entry) => entry.rarity === rarity.id).map(renderSkinCard).join("")}</ul>
+          </section>
+        `).join("")}
+      </div>
+    </section>
+  `;
 }
 
 function renderBbStats(bb) {
@@ -2179,6 +2277,7 @@ function renderGear() {
         <p class="gear-scroll-hint">Scroll for all looks</p>
       </aside>
       <span class="gear-rail" aria-hidden="true"><span class="gear-rail-thumb" data-gear-thumb></span></span>
+      ${state.gearPanel === "skins" ? renderGearSkinsPanel() : `
       <aside class="gear-weapons-col" aria-label="Weapons">
         <h2 class="gear-weapons-title">Weapons</h2>
         <p class="gear-equip-count">Equipped ${state.equippedWeapons.length}/${MAX_EQUIPPED_WEAPONS} · tap to equip</p>
@@ -2190,6 +2289,7 @@ function renderGear() {
       </aside>
       ${renderGearPotionsSection()}
       ${renderGearBbsSection()}
+      `}
       <section class="gear-stage">
         <header class="gear-head">
           <p class="drop-kicker">B.B <span>Gear</span></p>
@@ -2207,6 +2307,10 @@ function renderGear() {
           <button type="button" class="gear-turn-btn" data-action="turn-buddy" data-dir="-1" aria-label="Turn left">◀ Turn</button>
           <p class="gear-yaw-label">${YAW_LABELS[state.avatarYaw]}</p>
           <button type="button" class="gear-turn-btn" data-action="turn-buddy" data-dir="1" aria-label="Turn right">Turn ▶</button>
+        </div>
+        <div class="gear-panel-tabs" role="tablist" aria-label="Gear panels">
+          <button type="button" class="gear-panel-tab${state.gearPanel === "items" ? " active" : ""}" data-action="gear-panel" data-panel="items" role="tab" aria-selected="${state.gearPanel === "items"}">Items</button>
+          <button type="button" class="gear-panel-tab gear-panel-tab--skins${state.gearPanel === "skins" ? " active" : ""}" data-action="gear-panel" data-panel="skins" role="tab" aria-selected="${state.gearPanel === "skins"}">Skins ${state.ownedSkins.length}/${SKIN_CATALOG.length}</button>
         </div>
         <button class="drop-button ghost gear-back" type="button" data-action="hub-back">Back to Hub</button>
       </section>
@@ -2997,7 +3101,9 @@ function hubPortrait() {
   return `
     ${WEAPON_ART_DEFS}
     <button class="hub-portrait" type="button" data-action="open-gear" aria-label="Your buddy — open Gear">
-      ${buddyAvatarSvg(state.avatar, false, 0, state.equippedWeapons, "16 7 88 88")}
+      ${window.BBBuddyPreview
+        ? `<img class="hub-portrait-3d" src="${window.BBBuddyPreview.portrait(state.avatar, state.equippedSkin)}" alt="" draggable="false">`
+        : buddyAvatarSvg(state.avatar, false, 0, state.equippedWeapons, "16 7 88 88")}
     </button>
   `;
 }
@@ -3256,6 +3362,31 @@ app.addEventListener("click", (event) => {
     return;
   }
 
+  if (action === "gear-panel") {
+    state.gearPanel = actionTarget.dataset.panel === "skins" ? "skins" : "items";
+    state.skinTryOn = "";
+    state.gearNotice = "";
+    render();
+    return;
+  }
+
+  if (action === "try-skin" || action === "buy-skin" || action === "equip-skin") {
+    const skinId = actionTarget.dataset.skin;
+    const list = app.querySelector(".gear-skins-body");
+    const scrollTop = list ? list.scrollTop : 0;
+    if (action === "try-skin") {
+      state.skinTryOn = findSkin(skinId) && skinId !== state.equippedSkin ? skinId : "";
+    } else if (action === "buy-skin") {
+      buySkin(skinId);
+    } else {
+      toggleEquipSkin(skinId);
+    }
+    render();
+    const nextList = app.querySelector(".gear-skins-body");
+    if (nextList) nextList.scrollTop = scrollTop;
+    return;
+  }
+
   if (action === "pick-avatar") {
     const avatarId = actionTarget.dataset.avatar;
     if (!AVATAR_IDS.includes(avatarId)) return;
@@ -3338,6 +3469,7 @@ app.addEventListener("click", (event) => {
 
   if (action === "hub-back") {
     state.screen = "lobby";
+    state.skinTryOn = "";
     render();
     return;
   }
@@ -3374,5 +3506,5 @@ state.avatarYaw = readAvatarYaw();
 render();
 setInterval(tickLiveCount, 2200);
 window.addEventListener("bb3d-ready", () => {
-  if (state.screen === "gear") render();
+  if (state.screen === "gear" || state.screen === "lobby") render();
 });
