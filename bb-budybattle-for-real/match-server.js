@@ -1122,6 +1122,26 @@ function createMatchServer({ wss, verifyAccount, awardStars }) {
         return;
       }
       if (!msg || typeof msg !== "object") return;
+      if (msg.t === "playBots") {
+        if (!conn.username) {
+          send(ws, { t: "error", text: "Still signing in. Wait a moment, then tap Play Bots again." });
+          return;
+        }
+        const mode = MODES.includes(msg.mode) ? msg.mode : conn.mode;
+        const map = mapGen.MAP_IDS.includes(msg.map) ? msg.map : conn.map;
+        if (!mode || !map) {
+          send(ws, { t: "error", text: "Could not start bots. Leave the queue and pick a map again." });
+          return;
+        }
+        leaveQueue(conn);
+        try {
+          startMatch(mode, map, [conn]);
+        } catch (error) {
+          console.error("startMatch failed:", error);
+          send(ws, { t: "error", text: "Could not start the match. Try again." });
+        }
+        return;
+      }
       if (msg.t === "hello") {
         Promise.resolve(verifyAccount(String(msg.username || ""), String(msg.password || "")))
           .then((account) => {
@@ -1156,18 +1176,6 @@ function createMatchServer({ wss, verifyAccount, awardStars }) {
           return;
         }
         joinQueue(conn, msg.mode, msg.map);
-      } else if (msg.t === "playBots") {
-        if (!conn.queueKey && conn.pendingQueue) {
-          joinQueue(conn, conn.pendingQueue.mode, conn.pendingQueue.map);
-          conn.pendingQueue = null;
-        }
-        if (!conn.queueKey) {
-          send(ws, { t: "error", text: "Join the queue first, then try Play Bots again." });
-          return;
-        }
-        const [mode, map] = conn.queueKey.split(":");
-        leaveQueue(conn);
-        startMatch(mode, map, [conn]);
       } else if (msg.t === "leave") {
         leaveQueue(conn);
       }

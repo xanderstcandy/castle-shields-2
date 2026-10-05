@@ -1692,6 +1692,9 @@ function formatQueueWait(ms) {
 let matchLeaveIntent = false;
 let matchReconnectTimer = null;
 let matchReconnectAttempt = 0;
+let matchDropAuthed = false;
+let pendingPlayBots = false;
+let playBotsWatchdog = null;
 
 function closeMatchSocket() {
   if (!matchSocket) return;
@@ -1811,8 +1814,54 @@ function updateQueueDom() {
   if (status) status.textContent = queue.status;
 }
 
+function clearPlayBotsWatchdog() {
+  if (playBotsWatchdog) {
+    clearTimeout(playBotsWatchdog);
+    playBotsWatchdog = null;
+  }
+}
+
+function requestPlayBots() {
+  const queue = state.matchQueue;
+  if (!queue) return;
+  if (!matchSocket || matchSocket.readyState !== WebSocket.OPEN) {
+    state.matchQueue = { ...queue, status: "Not connected. Leave and try again." };
+    updateQueueDom();
+    return;
+  }
+  if (!window.BBGame) {
+    state.matchQueue = { ...queue, status: "3D game still loading. Wait a few seconds, then tap Play Bots again." };
+    updateQueueDom();
+    return;
+  }
+  if (!matchDropAuthed) {
+    pendingPlayBots = true;
+    state.matchQueue = { ...queue, status: "Signing in… bot match starts when ready." };
+    updateQueueDom();
+    return;
+  }
+  pendingPlayBots = false;
+  clearPlayBotsWatchdog();
+  sendMatchQueueJoin();
+  matchSocket.send(JSON.stringify({ t: "playBots", mode: queue.mode, map: queue.map }));
+  state.matchQueue = { ...queue, status: "Starting a bot match..." };
+  updateQueueDom();
+  playBotsWatchdog = setTimeout(() => {
+    if (state.screen !== "queue" || !state.matchQueue) return;
+    if (state.matchQueue.status !== "Starting a bot match...") return;
+    state.matchQueue = {
+      ...state.matchQueue,
+      status: "Match did not start. Hard refresh (Ctrl+F5), sign in again, then Play Bots."
+    };
+    updateQueueDom();
+  }, 12000);
+}
+
 function joinMatchQueue(mode, map) {
   closeMatchSocket();
+  clearPlayBotsWatchdog();
+  matchDropAuthed = false;
+  pendingPlayBots = false;
   matchLeaveIntent = false;
   syncShopWalletFromStorage();
   state.matchQueue = { mode, map, count: 0, needed: MATCH_PLAYERS, waitMs: 90000, status: "Connecting to the drop server..." };
@@ -1846,10 +1895,12 @@ function handleMatchMessage(msg) {
     state.matchQueue = { ...state.matchQueue, status: msg.text };
     updateQueueDom();
   } else if (msg.t === "hello-ok") {
+    matchDropAuthed = true;
     if (state.screen === "queue" && state.matchQueue) {
       state.matchQueue = { ...state.matchQueue, status: "Joining queue..." };
       updateQueueDom();
       sendMatchQueueJoin();
+      if (pendingPlayBots) requestPlayBots();
     }
   } else if (msg.t === "queue") {
     state.matchQueue = {
@@ -1861,6 +1912,7 @@ function handleMatchMessage(msg) {
     };
     updateQueueDom();
   } else if (msg.t === "start") {
+    clearPlayBotsWatchdog();
     if (!window.BBGame) {
       state.matchQueue = { ...state.matchQueue, status: "The 3D game failed to load. Refresh and try again." };
       updateQueueDom();
@@ -1873,12 +1925,19 @@ function handleMatchMessage(msg) {
     consumeOneGameLoadout();
     state.screen = "match";
     render();
-    window.BBGame.start({
-      root: app.querySelector("[data-match-root]"),
-      socket: matchSocket,
-      start: msg,
-      avatar: state.avatar
-    });
+    try {
+      window.BBGame.start({
+        root: app.querySelector("[data-match-root]"),
+        socket: matchSocket,
+        start: msg,
+        avatar: state.avatar
+      });
+    } catch (error) {
+      console.error(error);
+      state.screen = "queue";
+      state.matchQueue = { ...state.matchQueue, status: "Could not open the 3D match. Refresh and try again." };
+      render();
+    }
   } else if (msg.t === "end") {
     finishMatch(msg);
   } else if (window.BBGame && state.screen === "match") {
@@ -3533,19 +3592,13 @@ app.addEventListener("click", (event) => {
   }
 
   if (action === "play-bots") {
-    if (!matchSocket || matchSocket.readyState !== WebSocket.OPEN) {
-      state.matchQueue = { ...state.matchQueue, status: "Not connected. Leave and try again." };
-      updateQueueDom();
-      return;
-    }
-    sendMatchQueueJoin();
-    matchSocket.send(JSON.stringify({ t: "playBots" }));
-    state.matchQueue = { ...state.matchQueue, status: "Starting a bot match..." };
-    updateQueueDom();
+    requestPlayBots();
     return;
   }
 
   if (action === "leave-queue") {
+    clearPlayBotsWatchdog();
+    pendingPlayBots = false;
     if (matchSocket && matchSocket.readyState === WebSocket.OPEN) matchSocket.send(JSON.stringify({ t: "leave" }));
     closeMatchSocket();
     state.screen = state.matchQueue && state.matchQueue.mode === "ranked" ? "ranked-play" : "competitive-play";
