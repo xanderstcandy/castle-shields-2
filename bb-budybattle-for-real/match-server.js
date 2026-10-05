@@ -1,5 +1,5 @@
 const data = require("./game-data.js");
-const { BB_CATALOG } = require("./bb-art.js");
+const { BB_CATALOG, bbIsRideable, BB_CHARACTER_HEIGHT } = require("./bb-art.js");
 const mapGen = require("./map-gen.js");
 
 const TICK_MS = 50;
@@ -19,6 +19,9 @@ const BOT_TUNING = {
 };
 const BB_SPEED_UNITS = { "Very slow": 3, Slow: 5, Fast: 10, "Super fast": 12 };
 const BB_DEFAULT_SPEED = 7.5;
+const RIDE_REACH = 2.5;
+const RIDER_SEAT = 0.82;
+const BB_MAX_COLLIDE = 1.2;
 const MODES = ["ranked", "competitive"];
 
 const BOT_NAMES = [
@@ -161,7 +164,8 @@ class Match {
       touchingWall: false,
       input: { mx: 0, mz: 0, yaw: 0, pitch: 0, jump: false, attack: false },
       bot: ws ? null : { mode: "wander", goal: null, stuckAt: 0, lastPos: null, detourUntil: 0, detour: 0, thinkAt: 0, aimJitter: 0 },
-      disconnectedAt: 0
+      disconnectedAt: 0,
+      riding: 0
     };
     this.players.push(player);
     if (clean.bb) this.spawnBb(player, clean.bb);
@@ -171,6 +175,7 @@ class Match {
   spawnBb(owner, name) {
     const def = BB_CATALOG.find((bb) => bb.name === name);
     if (!def) return null;
+    const height = def.size * BB_CHARACTER_HEIGHT;
     const bb = {
       id: this.nextId++,
       owner: owner.id,
@@ -185,6 +190,11 @@ class Match {
       x: owner.x + (this.rand() - 0.5) * 3,
       z: owner.z + (this.rand() - 0.5) * 3,
       y: owner.y,
+      yaw: 0,
+      height,
+      radius: Math.max(0.35, Math.min(2.2, height * 0.3)),
+      rideable: bbIsRideable(def),
+      rider: 0,
       alive: true
     };
     this.bbs.push(bb);
@@ -193,6 +203,50 @@ class Match {
 
   playerById(id) {
     return this.players.find((p) => p.id === id) || null;
+  }
+
+  bbById(id) {
+    return this.bbs.find((bb) => bb.id === id && bb.alive) || null;
+  }
+
+  seatHeight(p) {
+    const mount = p.riding ? this.bbById(p.riding) : null;
+    return mount ? mount.height * RIDER_SEAT : 0;
+  }
+
+  toggleRide(p) {
+    const notice = (text) => { if (p.ws) send(p.ws, { t: "notice", text }); };
+    const current = p.riding ? this.bbById(p.riding) : null;
+    if (current) {
+      this.dismount(p, current);
+      return;
+    }
+    const near = this.bbs
+      .filter((bb) => bb.alive && bb.owner === p.id && !bb.rider && Math.hypot(bb.x - p.x, bb.z - p.z) <= bb.radius + RIDE_REACH)
+      .sort((a, b) => Math.hypot(a.x - p.x, a.z - p.z) - Math.hypot(b.x - p.x, b.z - p.z));
+    const mount = near.find((bb) => bb.rideable);
+    if (!mount) {
+      notice(near.length ? `${near[0].name} is too small to ride` : "Walk up to one of your big B.B.s to ride it");
+      return;
+    }
+    p.riding = mount.id;
+    mount.rider = p.id;
+    p.vy = 0;
+    notice(`Riding ${mount.name}`);
+  }
+
+  dismount(p, mount) {
+    p.riding = 0;
+    if (!mount) return;
+    mount.rider = 0;
+    const pos = {
+      x: mount.x - Math.cos(p.yaw) * (mount.radius + 0.8),
+      z: mount.z + Math.sin(p.yaw) * (mount.radius + 0.8)
+    };
+    mapGen.resolveCollision(this.map, pos, PLAYER_RADIUS, p.y);
+    p.x = pos.x;
+    p.z = pos.z;
+    p.vy = 0;
   }
 
   aliveCount() {
@@ -239,6 +293,8 @@ class Match {
     if (bb.hp <= 0) {
       bb.alive = false;
       this.events.push({ k: "bbdown", id: bb.id });
+      const rider = bb.rider ? this.playerById(bb.rider) : null;
+      if (rider) this.dismount(rider, bb);
     }
   }
 
@@ -288,7 +344,9 @@ class Match {
     const reward = this.mode === "competitive"
       ? data.getPlacementReward(data.COMPETITIVE_PAYOUTS, this.mapId, p.place)
       : data.getPlacementReward(data.RANKED_STARS, this.mapId, p.place);
-    if (this.mode === "ranked" && reward > 0) this.awardStars(p.name, reward);
+    if (this.mode === "ranked" && reward > 0) {
+      Promise.resolve(this.awardStars(p.name, reward)).catch(() => {});
+    }
     send(p.ws, {
       t: "end",
       place: p.place,
@@ -362,6 +420,8 @@ class Match {
       this.pickup(p, msg.id ? Number(msg.id) : 0);
     } else if (msg.t === "buy") {
       this.buy(p, String(msg.kind || ""), String(msg.name || ""));
+    } else if (msg.t === "ride") {
+      this.toggleRide(p);
     }
   }
 
@@ -483,13 +543,15 @@ class Match {
     this.map.chests.forEach((chest) => {
       if (!this.chestsOpen.has(chest.id) && inFront(chest.x, chest.z, data.MELEE_RANGE + 0.6)) this.openChest(chest);
     });
+    const mySeat = this.seatHeight(p);
     this.players.forEach((target) => {
-      if (target === p || !target.alive || Math.abs(target.y - p.y) > 2.5) return;
+      if (target === p || !target.alive) return;
+      if (Math.abs(target.y - p.y) > 2.5 + Math.max(mySeat, this.seatHeight(target))) return;
       if (inFront(target.x, target.z, data.MELEE_RANGE)) this.applyWeaponHit(p, item, damage, target, null);
     });
     this.bbs.forEach((bb) => {
       if (!bb.alive || bb.owner === p.id) return;
-      if (inFront(bb.x, bb.z, data.MELEE_RANGE)) this.applyWeaponHit(p, item, damage, null, bb);
+      if (inFront(bb.x, bb.z, data.MELEE_RANGE + bb.radius)) this.applyWeaponHit(p, item, damage, null, bb);
     });
   }
 
@@ -523,6 +585,12 @@ class Match {
       mx /= len;
       mz /= len;
     }
+    const mount = p.riding ? this.bbById(p.riding) : null;
+    if (mount) {
+      this.moveMount(p, mount, mx, mz, dt);
+      return;
+    }
+    if (p.riding) p.riding = 0;
     const before = { x: p.x, z: p.z };
     const pos = { x: p.x + mx * PLAYER_SPEED * dt, z: p.z + mz * PLAYER_SPEED * dt };
     const wanted = { x: pos.x, z: pos.z };
@@ -546,6 +614,22 @@ class Match {
       p.vy = 0;
     }
     p.moved = Math.hypot(p.x - before.x, p.z - before.z);
+  }
+
+  moveMount(p, mount, mx, mz, dt) {
+    const speed = Math.max(mount.speed * 1.25, PLAYER_SPEED);
+    const pos = { x: mount.x + mx * speed * dt, z: mount.z + mz * speed * dt };
+    mapGen.resolveCollision(this.map, pos, Math.min(mount.radius, BB_MAX_COLLIDE), mount.y);
+    p.moved = Math.hypot(pos.x - mount.x, pos.z - mount.z);
+    mount.x = pos.x;
+    mount.z = pos.z;
+    mount.y = mapGen.terrainHeight(this.map, mount.x, mount.z);
+    if (mx || mz) mount.yaw = Math.atan2(mx, mz);
+    p.x = mount.x;
+    p.z = mount.z;
+    p.y = mount.y + mount.height * RIDER_SEAT;
+    p.vy = 0;
+    p.touchingWall = false;
   }
 
   moveBb(bb, dt) {
@@ -1014,17 +1098,20 @@ function createMatchServer({ wss, verifyAccount, awardStars }) {
       }
       if (!msg || typeof msg !== "object") return;
       if (msg.t === "hello") {
-        const account = verifyAccount(String(msg.username || ""), String(msg.password || ""));
-        if (!account) {
-          send(ws, { t: "error", text: "Sign in again to drop in." });
-          return;
-        }
-        conn.username = account.username;
-        conn.avatar = String(msg.avatar || "boy-1");
-        conn.loadout = sanitizeLoadout(msg.loadout);
-        const resumeMatch = findResumeMatch(account.username);
-        if (resumeMatch && resumeMatch.resumePlayer(conn)) return;
-        send(ws, { t: "hello-ok" });
+        Promise.resolve(verifyAccount(String(msg.username || ""), String(msg.password || "")))
+          .then((account) => {
+            if (!account) {
+              send(ws, { t: "error", text: "Sign in again to drop in." });
+              return;
+            }
+            conn.username = account.username;
+            conn.avatar = String(msg.avatar || "boy-1");
+            conn.loadout = sanitizeLoadout(msg.loadout);
+            const resumeMatch = findResumeMatch(account.username);
+            if (resumeMatch && resumeMatch.resumePlayer(conn)) return;
+            send(ws, { t: "hello-ok" });
+          })
+          .catch(() => send(ws, { t: "error", text: "Sign in again to drop in." }));
         return;
       }
       if (!conn.username) return;

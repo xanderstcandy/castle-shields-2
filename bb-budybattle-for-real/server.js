@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const { WebSocketServer } = require("ws");
 const { createMatchServer } = require("./match-server.js");
+const { createStore } = require("./accounts-store.js");
 
 const root = __dirname;
 const port = Number(process.env.PORT) || 3003;
@@ -66,73 +67,44 @@ function leagueFromPlacement(rank, total, stars) {
   return "wood";
 }
 
-function readAccounts() {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(accountsFile, "utf8"));
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
+const store = createStore(accountsFile, dataDir);
+let storeReadyPromise = null;
 
-function writeAccounts(accounts) {
-  fs.mkdirSync(dataDir, { recursive: true });
-  fs.writeFileSync(accountsFile, JSON.stringify(accounts));
-}
-
-function loadAccounts() {
-  const accounts = readAccounts()
-    .filter(isRealAccount)
-    .map((account) => ensureAccountFields(account));
-  writeAccounts(accounts);
-  return accounts;
-}
-
-function findAccount(usernameKey, accounts = null) {
-  const list = accounts || readAccounts();
-  return list.find((account) => account.username.toLowerCase() === usernameKey) || null;
-}
-
-function putAccount(username, password) {
-  const accounts = readAccounts();
-  const usernameKey = username.toLowerCase();
-  const index = accounts.findIndex((account) => account.username.toLowerCase() === usernameKey);
-  const seeded = ensureAccountFields({ username, password, drops: 0, stars: 0, league: "wood" });
-
-  if (index === -1) {
-    accounts.push(seeded);
-  } else {
-    accounts[index] = ensureAccountFields({
-      username: accounts[index].username,
-      password,
-      drops: accounts[index].drops || 0,
-      league: "wood",
-      stars: Number.isFinite(accounts[index].stars) ? accounts[index].stars : 0
+function ensureStoreReady() {
+  if (!storeReadyPromise) {
+    storeReadyPromise = Promise.resolve(store.ready()).catch((error) => {
+      storeReadyPromise = null;
+      throw error;
     });
   }
+  return storeReadyPromise;
+}
 
-  writeAccounts(accounts);
-  return ensureAccountFields(accounts[index === -1 ? accounts.length - 1 : index]);
+async function loadAccounts() {
+  const accounts = (await store.list())
+    .filter(isRealAccount)
+    .map((account) => ensureAccountFields(account));
+  return accounts;
 }
 
 const lastMatchResults = new Map();
 
-function verifyAccount(username, password) {
-  const account = findAccount(username.trim().toLowerCase());
+async function verifyAccount(username, password) {
+  await ensureStoreReady();
+  const account = await store.find(username.trim().toLowerCase());
   if (!account || account.password !== password.trim()) return null;
-  return account;
+  return ensureAccountFields(account);
 }
 
-function awardStars(username, stars) {
-  const accounts = readAccounts();
-  const index = accounts.findIndex((account) => account.username.toLowerCase() === username.toLowerCase());
-  if (index === -1) return;
-  const account = ensureAccountFields(accounts[index]);
-  account.stars += stars;
-  account.drops = (account.drops || 0) + 1;
-  accounts[index] = account;
-  writeAccounts(accounts);
-  lastMatchResults.set(account.username.toLowerCase(), { stars, at: Date.now() });
+async function awardStars(username, stars) {
+  await ensureStoreReady();
+  const account = await store.find(username.toLowerCase());
+  if (!account) return;
+  const next = ensureAccountFields(account);
+  next.stars += stars;
+  next.drops = (next.drops || 0) + 1;
+  await store.save(next);
+  lastMatchResults.set(next.username.toLowerCase(), { stars, at: Date.now() });
 }
 
 function buildRealRoster(accounts, viewerUsername) {
@@ -234,8 +206,10 @@ async function handleApi(req, res, urlPath) {
     return;
   }
 
-  const accounts = loadAccounts();
-  const existing = findAccount(username.toLowerCase(), accounts);
+  await ensureStoreReady();
+
+  const usernameKey = username.toLowerCase();
+  const existing = await store.find(usernameKey);
 
   if (urlPath === "/api/create-account") {
     if (existing) {
@@ -248,8 +222,9 @@ async function handleApi(req, res, urlPath) {
       return;
     }
 
-    const created = putAccount(username, password);
-    sendJson(res, 201, publicAccount(created, loadAccounts()));
+    const created = ensureAccountFields(await store.create(username, password));
+    const accounts = await loadAccounts();
+    sendJson(res, 201, publicAccount(created, accounts));
     return;
   }
 
@@ -258,7 +233,8 @@ async function handleApi(req, res, urlPath) {
       sendJson(res, 401, { error: "No squad member matches that callsign and passcode." });
       return;
     }
-    sendJson(res, 200, publicAccount(existing, accounts));
+    const accounts = await loadAccounts();
+    sendJson(res, 200, publicAccount(ensureAccountFields(existing), accounts));
     return;
   }
 
@@ -268,6 +244,7 @@ async function handleApi(req, res, urlPath) {
       return;
     }
 
+    const accounts = await loadAccounts();
     const you = ensureAccountFields(existing);
     sendJson(res, 200, {
       you: publicAccount(you, accounts),
@@ -283,8 +260,9 @@ async function handleApi(req, res, urlPath) {
       sendJson(res, 401, { error: "Sign in again to see your match result." });
       return;
     }
+    const accounts = await loadAccounts();
     sendJson(res, 200, {
-      account: publicAccount(existing, accounts),
+      account: publicAccount(ensureAccountFields(existing), accounts),
       lastRankedAward: lastMatchResults.get(existing.username.toLowerCase()) || null
     });
     return;
@@ -349,6 +327,13 @@ const server = http.createServer((req, res) => {
 
 createMatchServer({ wss: new WebSocketServer({ server, path: "/ws" }), verifyAccount, awardStars });
 
-server.listen(port, "0.0.0.0", () => {
-  console.log(`B.B: BudyBattle, For Real-(battle royale) listening on http://localhost:${port}`);
-});
+ensureStoreReady()
+  .then(() => {
+    server.listen(port, "0.0.0.0", () => {
+      console.log(`B.B: BudyBattle, For Real-(battle royale) listening on http://localhost:${port} (accounts in ${store.label})`);
+    });
+  })
+  .catch((error) => {
+    console.error("Failed to initialize account storage:", error);
+    process.exit(1);
+  });

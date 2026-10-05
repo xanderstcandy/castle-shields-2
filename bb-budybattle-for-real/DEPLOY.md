@@ -4,53 +4,55 @@
 
 This game lives in the **`bb-budybattle-for-real`** folder inside the [castle-shields-2](https://github.com/xanderstcandy/castle-shields-2) repo.
 
-From your machine (after committing):
+Push changes to `main` so Render can deploy them.
 
-```bash
-cd castle-shields-2
-git add bb-budybattle-for-real render.yaml
-git commit -m "Add BudyBattle web app and Render config"
-git push origin main
-```
+`accounts.json` is gitignored. Production accounts live in **Neon Postgres**, not on disk.
 
-`accounts.json` is gitignored so player passwords never go to GitHub.
+## Render (Blueprint or manual Web Service)
 
-## Render (one-click from GitHub)
+### Option A — Blueprint (both games in one repo)
 
-1. Sign in at [render.com](https://render.com) and connect your GitHub account.
-2. **New → Blueprint** and select the `castle-shields-2` repo (Render reads `render.yaml` at the repo root).
-3. Confirm the **Web Service** `bb-budybattle`:
-   - **Root directory:** `bb-budybattle-for-real`
-   - **Build:** `npm install --omit=dev`
-   - **Start:** `npm start`
-   - **Health check:** `/health`
-4. Deploy. Your live URL will look like `https://bb-budybattle.onrender.com`.
+1. [render.com](https://render.com) → **New → Blueprint** → select **castle-shields-2**.
+2. Render reads `render.yaml` and creates/updates:
+   - **castle-shields-2** (existing Castle Shields app)
+   - **bb-budybattle** (this game, `rootDir: bb-budybattle-for-real`, **Free** plan)
+3. When prompted, set **`DATABASE_URL`** for **bb-budybattle** (see Neon below).
 
-### Accounts and saves
+You do **not** need a paid disk. Both services can use `plan: free`.
 
-- Set **`DATA_DIR=/var/data`** (already in `render.yaml`) and attach the **1 GB disk** so `accounts.json` survives restarts.
-- Without a disk, accounts reset whenever Render redeploys or moves your instance.
+### Option B — Manual Web Service (no Blueprint)
 
-### Free tier notes
+1. **New → Web Service** → same GitHub repo.
+2. **Root Directory:** `bb-budybattle-for-real`
+3. **Build:** `npm install --omit=dev`
+4. **Start:** `npm start`
+5. **Instance type:** Free
+6. **Health Check Path:** `/health`
+7. Add env var **`DATABASE_URL`** (Neon connection string).
+
+## Neon Postgres (accounts survive on Free Render)
+
+BudyBattle uses table **`bb_accounts`** (separate from Castle Shields’ `accounts` table). You can use the **same Neon project** and connection string as Castle Shields, or a new database.
+
+1. In [Neon Console](https://console.neon.tech), open your project (or create one).
+2. Copy the **pooled** connection string (`DATABASE_URL`), e.g.  
+   `postgresql://user:pass@ep-....pooler.us-east-2.aws.neon.tech/neondb?sslmode=require`
+3. In Render → **bb-budybattle** → **Environment** → add **`DATABASE_URL`** with that value.
+4. Redeploy. On first boot the server creates `bb_accounts` automatically.
+
+**One-time migration:** If you had local `accounts.json`, put it next to `server.js` before the first Postgres boot (or set `DATA_DIR` locally). The server imports those rows into `bb_accounts` when the table is empty.
+
+Without `DATABASE_URL`, the app falls back to **`accounts.json`** (fine for local dev; on Render Free, file data is lost on redeploy).
+
+## Free tier notes
 
 - The service may **sleep after ~15 minutes** with no traffic; the first visit can take 30–60 seconds to wake up.
-- Long **WebSocket** matches need the service awake; idle sleep can drop connections. A paid instance stays on and is more stable for multiplayer.
+- Long **WebSocket** matches need the service awake; sleep can drop connections. Starter (paid) stays on longer.
 
-## Local vs production
-
-| | Local | Render |
-|---|--------|--------|
-| Port | 3003 (or `PORT`) | `PORT` from Render |
-| Data | `accounts.json` next to `server.js` | `DATA_DIR/accounts.json` on disk |
-
-WebSockets use the same host as the page (`wss://` on HTTPS), so no extra client config is required.
+WebSockets use the same host as the page (`wss://` on HTTPS).
 
 ## Connection drops mid-battle
 
-The server now:
-
-- Sends **WebSocket ping** every 25s so proxies do not treat the match as idle.
-- Gives you **45 seconds to reconnect** after a drop instead of eliminating you immediately.
-- The browser **auto-reconnects** and resumes the same match when you sign in again on the new socket.
-
-If you still disconnect often on Render free tier, try a **Starter** (always-on) plan or play during an active session right after the site wakes up.
+- **WebSocket ping** every 25s
+- **45 seconds to reconnect** before elimination
+- Browser **auto-reconnects** and resumes the match
