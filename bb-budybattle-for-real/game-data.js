@@ -390,7 +390,7 @@ const WEAPON_RANGED = {
 };
 
 const WEAPON_PASSIVE = ["Body Armor", "Combat Helmet", "Riot Shield", "Jetpack", "Grappling Hook"];
-const WEAPON_SINGLE_USE = new Set(["Throwing Knife"]);
+const WEAPON_SINGLE_USE = new Set(["Throwing Knife", "Shuriken"]);
 
 const MELEE_RANGE = 2.8;
 const MELEE_COOLDOWN_MS = 450;

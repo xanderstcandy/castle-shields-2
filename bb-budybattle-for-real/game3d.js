@@ -1495,6 +1495,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     listeners: [],
     disposed: false,
     socketLive: true,
+    linkDown: false,
     pageHidden: false,
     stuckMs: 0,
     stuckPos: new THREE.Vector3(),
@@ -1518,12 +1519,12 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       g.socketLive = socket.readyState === WebSocket.OPEN;
     };
     const onClose = () => {
-      sync();
-      toast("Connection lost — reconnecting…", 4000);
+      g.socketLive = false;
+      g.linkDown = true;
+      toast("Reconnecting…", 0);
     };
     const onOpen = () => {
       sync();
-      toast("Back in the match", 1600);
     };
     socket.addEventListener("close", onClose);
     socket.addEventListener("open", onOpen);
@@ -1549,7 +1550,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     el.textContent = text;
     el.classList.add("show");
     clearTimeout(g.toastTimer);
-    g.toastTimer = setTimeout(() => el.classList.remove("show"), ms);
+    if (ms > 0) g.toastTimer = setTimeout(() => el.classList.remove("show"), ms);
   }
 
   function focusMatchView() {
@@ -1800,6 +1801,11 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       g.serverElapsedAt = performance.now();
       g.me = msg.me;
       g.alive = msg.alive;
+      if (g.linkDown) {
+        g.linkDown = false;
+        g.socketLive = g.socket && g.socket.readyState === WebSocket.OPEN;
+        toast("Back in the match. Tap your move keys again.", 2200);
+      }
       applyEvents(msg.ev);
       updateHud();
     } else if (msg.t === "notice") {
@@ -2444,7 +2450,8 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
   }
 
   function sendInput(now) {
-    if (!g.socketLive) return;
+    if (!g.socket || g.socket.readyState !== WebSocket.OPEN) return;
+    g.socketLive = true;
     if (now - g.lastInputAt < INPUT_SEND_MS) return;
     g.lastInputAt = now;
     const k = g.keys;

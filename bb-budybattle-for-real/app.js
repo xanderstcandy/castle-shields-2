@@ -1743,6 +1743,7 @@ function reconnectMatchSocket() {
   matchSocket = socket;
   socket.onopen = () => {
     matchReconnectAttempt = 0;
+    if (window.BBGame) window.BBGame.setSocket(socket);
     socket.send(JSON.stringify({
       t: "hello",
       username: state.username,
@@ -1916,6 +1917,7 @@ function handleMatchMessage(msg) {
     updateQueueDom();
   } else if (msg.t === "hello-ok") {
     matchDropAuthed = true;
+    if (state.screen === "match" && window.BBGame && matchSocket) window.BBGame.setSocket(matchSocket);
     if (state.screen === "queue" && state.matchQueue) {
       state.matchQueue = { ...state.matchQueue, status: "Joining queue..." };
       updateQueueDom();

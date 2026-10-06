@@ -546,6 +546,7 @@ class Match {
   }
 
   disconnect(ws) {
+    if (ws.replaced) return;
     const p = this.players.find((entry) => entry.ws === ws);
     if (!p || !p.alive) return;
     p.ws = null;
@@ -555,7 +556,11 @@ class Match {
 
   resumePlayer(conn) {
     const p = this.players.find((entry) => entry.name.toLowerCase() === conn.username.toLowerCase() && entry.alive);
-    if (!p || p.ws || !p.disconnectedAt) return false;
+    if (!p) return false;
+    if (p.ws && p.ws !== conn.ws) {
+      p.ws.replaced = true;
+      p.ws.matchPlayer = null;
+    }
     p.ws = conn.ws;
     p.disconnectedAt = 0;
     conn.match = this;
@@ -1230,10 +1235,11 @@ class Match {
     const hazard = mapGen.hazardAt(this.mapId, now);
     this.players.forEach((p) => {
       if (!p.alive) return;
-      if (p.disconnectedAt) {
+      if (p.disconnectedAt && !p.ws) {
         if (Date.now() - p.disconnectedAt > RECONNECT_GRACE_MS) this.eliminate(p, null, "Disconnected");
         return;
       }
+      if (p.disconnectedAt) p.disconnectedAt = 0;
       if (p.bot) this.botThink(p, hazard, now);
       this.movePlayer(p, dt, now);
       if (p.input.attack && now >= p.stunUntil) this.attack(p, now);
@@ -1339,7 +1345,7 @@ function createMatchServer({ wss, verifyAccount, awardStars }) {
     const key = username.toLowerCase();
     for (const match of matches) {
       if (match.finished) continue;
-      const player = match.players.find((entry) => entry.alive && entry.disconnectedAt && !entry.ws && entry.name.toLowerCase() === key);
+      const player = match.players.find((entry) => entry.alive && entry.name.toLowerCase() === key);
       if (player) return match;
     }
     return null;
