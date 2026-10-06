@@ -3522,10 +3522,10 @@ body {
 }
 
 .mh-tutorial {
-  position: absolute;
+  position: fixed;
   left: 50%;
-  top: 50%;
-  z-index: 12;
+  top: 46%;
+  z-index: 80;
   width: min(560px, 92vw);
   padding: 22px 24px 18px;
   transform: translate(-50%, -50%);
@@ -3588,26 +3588,34 @@ body {
   cursor: pointer;
 }
 
-.bb-speech--hub {
-  margin-bottom: 18px;
+.bb-speech--float {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  z-index: 80;
+  width: min(440px, calc(100vw - 28px));
+  margin: 0;
   padding: 16px 18px 14px;
-  border: 1px solid rgba(86, 230, 255, 0.45);
+  transform: translateX(-50%);
+  border: 1px solid rgba(86, 230, 255, 0.55);
   border-radius: 16px;
-  background: rgba(8, 16, 32, 0.92);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  background: rgba(8, 16, 32, 0.96);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
   text-align: left;
+  pointer-events: auto;
 }
 
-.bb-speech--hub::after {
+.bb-speech--float::after {
   content: "";
-  display: block;
+  position: absolute;
+  left: 50%;
+  top: -10px;
   width: 18px;
   height: 18px;
-  margin: 10px auto -26px;
-  transform: rotate(45deg);
-  background: rgba(8, 16, 32, 0.92);
-  border-right: 1px solid rgba(86, 230, 255, 0.45);
-  border-bottom: 1px solid rgba(86, 230, 255, 0.45);
+  transform: translateX(-50%) rotate(45deg);
+  background: rgba(8, 16, 32, 0.96);
+  border-left: 1px solid rgba(86, 230, 255, 0.55);
+  border-top: 1px solid rgba(86, 230, 255, 0.55);
 }
 
 .bb-speech-title {
