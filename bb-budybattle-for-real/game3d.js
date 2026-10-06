@@ -458,37 +458,696 @@ function buildInstanced(geometry, material, count, cast = true) {
   return mesh;
 }
 
+const WOOD_TONES = [0x8b5a2b, 0x6b4423, 0xa0522d, 0x5c4033];
+const FABRIC_TONES = [0x2563eb, 0x9333ea, 0x16a34a, 0xdc2626, 0x64748b, 0xd97706];
+const BOOK_TONES = [0xdc2626, 0x2563eb, 0x16a34a, 0xeab308, 0x7c3aed, 0xf97316, 0x0f766e];
+const GOODS_TONES = [0xef4444, 0xf59e0b, 0x22c55e, 0x3b82f6, 0xec4899, 0xfacc15, 0x14b8a6];
+const SCREEN_TONES = [0x1d4ed8, 0x0e7490, 0x7c3aed, 0x15803d];
+const BARREL_TONES = [0x7c2d12, 0x1e3a8a, 0x166534, 0x991b1b];
+const FLOOR_TONES = { house: 0x9a6b42, shop: 0xd6d3d1, warehouse: 0x6b7280, tower: 0x94a3b8 };
+const WALL_PAINT = {
+  house: [0xfef3c7, 0xdbeafe, 0xfce7f3, 0xdcfce7, 0xf5f5f4],
+  shop: [0xfafaf9, 0xfef9c3],
+  warehouse: [0xa8a29e, 0x9ca3af],
+  tower: [0xe2e8f0, 0xf1f5f9]
+};
+const RUG_TONES = [0x9f1239, 0x1e3a8a, 0x854d0e, 0x166534, 0x6b21a8];
+
+function shadeHex(hex, amount) {
+  return new THREE.Color(hex).multiplyScalar(amount).getHex();
+}
+
+function propParts(prop) {
+  const v = prop.variant || 0;
+  const wood = WOOD_TONES[v % WOOD_TONES.length];
+  const fabric = FABRIC_TONES[(prop.id + v) % FABRIC_TONES.length];
+  const { w, d, h } = prop;
+  const parts = [];
+  const box = (x, y, z, bw, bh, bd, c) => parts.push({ s: "box", x, y, z, w: bw, h: bh, d: bd, c });
+  const cyl = (x, y, z, dia, ch, c) => parts.push({ s: "cyl", x, y, z, w: dia, h: ch, d: dia, c });
+  const glow = (x, y, z, bw, bh, bd, c) => parts.push({ s: "glow", x, y, z, w: bw, h: bh, d: bd, c });
+  const legs = (height, inset, size, c) => {
+    [-1, 1].forEach((sx) => [-1, 1].forEach((sz) => box(sx * (w / 2 - inset), height / 2, sz * (d / 2 - inset), size, height, size, c)));
+  };
+  const shelfFrame = (c, levels) => {
+    box(-w / 2 + 0.03, h / 2, 0, 0.06, h, d, c);
+    box(w / 2 - 0.03, h / 2, 0, 0.06, h, d, c);
+    box(0, h / 2, -d / 2 + 0.02, w, h, 0.04, c);
+    const ys = [];
+    for (let i = 0; i <= levels; i += 1) {
+      const y = 0.05 + (i / levels) * (h - 0.1);
+      box(0, y, 0, w, 0.05, d, c);
+      if (i < levels) ys.push(y + 0.025);
+    }
+    return ys;
+  };
+  switch (prop.type) {
+    case "bed":
+      box(0, 0.18, 0, w, 0.36, d, wood);
+      box(0, 0.46, 0.05, w - 0.1, 0.2, d - 0.15, 0xf8fafc);
+      box(0, 0.58, d * 0.15, w - 0.04, 0.08, d * 0.62, fabric);
+      box(0, 0.62, -d / 2 + 0.38, w * 0.7, 0.14, 0.4, 0xffffff);
+      box(0, 0.55, -d / 2 + 0.05, w, 1.1, 0.1, wood);
+      break;
+    case "wardrobe":
+      box(0, h / 2, 0, w, h, d, wood);
+      box(0, h / 2, d / 2 + 0.01, 0.03, h - 0.2, 0.02, shadeHex(wood, 0.6));
+      box(-0.12, h * 0.55, d / 2 + 0.03, 0.04, 0.3, 0.04, 0xd4d4d8);
+      box(0.12, h * 0.55, d / 2 + 0.03, 0.04, 0.3, 0.04, 0xd4d4d8);
+      box(0, h + 0.02, 0, w + 0.06, 0.04, d + 0.06, shadeHex(wood, 0.8));
+      break;
+    case "sofa":
+      box(0, 0.22, 0, w, 0.44, d, fabric);
+      box(0, 0.7, -d / 2 + 0.13, w, 0.52, 0.26, fabric);
+      box(-w / 2 + 0.1, 0.6, 0, 0.2, 0.34, d, fabric);
+      box(w / 2 - 0.1, 0.6, 0, 0.2, 0.34, d, fabric);
+      box(-w / 4 + 0.05, 0.5, 0.08, w / 2 - 0.3, 0.12, d - 0.36, shadeHex(fabric, 1.25));
+      box(w / 4 - 0.05, 0.5, 0.08, w / 2 - 0.3, 0.12, d - 0.36, shadeHex(fabric, 1.25));
+      box(-w / 2 + 0.45, 0.72, -d / 2 + 0.33, 0.4, 0.35, 0.12, 0xfef3c7);
+      break;
+    case "tv":
+      box(0, 0.25, 0, w, 0.5, d, 0x292524);
+      box(-w / 4, 0.25, d / 2 + 0.01, w / 2 - 0.1, 0.38, 0.02, 0x44403c);
+      box(w / 4, 0.25, d / 2 + 0.01, w / 2 - 0.1, 0.38, 0.02, 0x44403c);
+      box(0, 0.55, -0.05, 0.1, 0.1, 0.1, 0x111827);
+      box(0, 0.95, -0.05, w * 0.85, 0.75, 0.07, 0x111827);
+      glow(0, 0.95, -0.01, w * 0.78, 0.66, 0.02, SCREEN_TONES[v]);
+      break;
+    case "table":
+      box(0, h - 0.04, 0, w, 0.08, d, wood);
+      legs(h - 0.08, 0.1, 0.08, wood);
+      cyl(0, h + 0.08, 0, 0.16, 0.16, 0xf8fafc);
+      cyl(0, h + 0.22, 0, 0.12, 0.14, 0xf472b6);
+      cyl(-w / 4, h + 0.01, 0.15, 0.3, 0.02, 0xffffff);
+      cyl(w / 4, h + 0.01, -0.15, 0.3, 0.02, 0xffffff);
+      break;
+    case "chair":
+      legs(0.41, 0.05, 0.06, wood);
+      box(0, 0.45, 0, w, 0.08, d, wood);
+      box(0, 0.5, 0.02, w - 0.08, 0.04, d - 0.1, fabric);
+      box(0, 0.75, -d / 2 + 0.03, w, 0.55, 0.06, wood);
+      break;
+    case "kitchen":
+      box(0, 0.45, 0, w, 0.9, d, 0xf5f5f4);
+      box(0, 0.93, 0, w + 0.04, 0.06, d + 0.04, 0x44403c);
+      box(-w / 6, 0.45, d / 2 + 0.01, 0.02, 0.8, 0.01, 0xa8a29e);
+      box(w / 6, 0.45, d / 2 + 0.01, 0.02, 0.8, 0.01, 0xa8a29e);
+      [-w / 3, 0, w / 3].forEach((x) => box(x, 0.75, d / 2 + 0.03, 0.18, 0.03, 0.03, 0x78716c));
+      box(-w / 4, 0.965, 0, 0.6, 0.02, 0.4, 0x9ca3af);
+      cyl(-w / 4, 1.1, -d / 2 + 0.12, 0.05, 0.28, 0xd4d4d8);
+      cyl(w / 4 - 0.2, 0.97, -0.1, 0.22, 0.02, 0x111827);
+      cyl(w / 4 + 0.2, 0.97, 0.1, 0.22, 0.02, 0x111827);
+      box(0, 1.85, -d / 2 + 0.18, w, 0.7, 0.35, 0xf5f5f4);
+      box(0, 1.85, -d / 2 + 0.36, 0.02, 0.6, 0.01, 0xa8a29e);
+      break;
+    case "fridge":
+      box(0, h / 2, 0, w, h, d, 0xe5e7eb);
+      box(0, h * 0.62, d / 2 + 0.01, w, 0.03, 0.02, 0x9ca3af);
+      box(w / 2 - 0.12, h * 0.8, d / 2 + 0.04, 0.05, 0.4, 0.05, 0x6b7280);
+      box(w / 2 - 0.12, h * 0.4, d / 2 + 0.04, 0.05, 0.5, 0.05, 0x6b7280);
+      box(-0.15, h * 0.85, d / 2 + 0.02, 0.12, 0.1, 0.01, GOODS_TONES[v]);
+      break;
+    case "bookshelf":
+      shelfFrame(wood, 4).forEach((y, s) => {
+        const count = 6;
+        const bw = (w - 0.2) / (count * 1.25);
+        for (let j = 0; j < count; j += 1) {
+          const bh = 0.25 + ((prop.id * 7 + j * 13 + s * 5) % 10) / 50;
+          box(-w / 2 + 0.15 + j * bw * 1.25, y + bh / 2, 0.02, bw, bh, d - 0.12, BOOK_TONES[(prop.id + j + s * 3) % BOOK_TONES.length]);
+        }
+      });
+      break;
+    case "shelfGoods":
+      shelfFrame(0xd1d5db, 4).forEach((y, s) => {
+        for (let j = 0; j < 4; j += 1) {
+          const gh = 0.18 + ((prop.id + j * 3 + s) % 4) * 0.05;
+          box(-w / 2 + 0.35 + j * ((w - 0.5) / 4), y + gh / 2, 0.03, 0.42, gh, d - 0.15, GOODS_TONES[(prop.id + j + s * 2) % GOODS_TONES.length]);
+        }
+      });
+      break;
+    case "rack": {
+      [-1, 1].forEach((sx) => [-1, 1].forEach((sz) => box(sx * (w / 2 - 0.05), h / 2, sz * (d / 2 - 0.05), 0.1, h, 0.1, 0xea580c)));
+      [0.15, h * 0.5, h - 0.05].forEach((y, level) => {
+        box(0, y, d / 2 - 0.05, w, 0.1, 0.08, 0x1d4ed8);
+        box(0, y, -d / 2 + 0.05, w, 0.1, 0.08, 0x1d4ed8);
+        box(0, y + 0.05, 0, w - 0.1, 0.04, d - 0.1, 0x78716c);
+        if (level < 2) {
+          box(-w / 4, y + 0.42, 0, w / 2 - 0.25, 0.7, d - 0.2, 0xc8a165);
+          box(w / 4, y + 0.42, 0, w / 2 - 0.25, 0.7, d - 0.2, shadeHex(0xc8a165, 0.9));
+        }
+      });
+      break;
+    }
+    case "counter":
+      box(0, 0.5, 0, w, 1, d, wood);
+      box(0, 0.5, d / 2 + 0.01, w - 0.2, 0.7, 0.02, shadeHex(wood, 0.75));
+      box(0, 1.03, 0, w + 0.06, 0.06, d + 0.06, 0x44403c);
+      box(w / 4, 1.18, 0, 0.4, 0.24, 0.35, 0x1f2937);
+      glow(w / 4, 1.34, -0.05, 0.28, 0.12, 0.02, 0x22c55e);
+      box(-w / 4, 1.1, 0, 0.3, 0.08, 0.3, GOODS_TONES[v]);
+      break;
+    case "crate":
+      box(0, h / 2, 0, w, h, d, 0xb8860b);
+      box(0, 0.12, 0, w + 0.02, 0.1, d + 0.02, 0x8b5a2b);
+      box(0, h - 0.12, 0, w + 0.02, 0.1, d + 0.02, 0x8b5a2b);
+      box(0, h / 2, d / 2 + 0.01, 0.1, h, 0.02, 0x8b5a2b);
+      box(0, h / 2, -d / 2 - 0.01, 0.1, h, 0.02, 0x8b5a2b);
+      break;
+    case "barrel":
+      cyl(0, h / 2, 0, w, h, BARREL_TONES[v]);
+      cyl(0, 0.2, 0, w + 0.03, 0.06, 0x374151);
+      cyl(0, h - 0.2, 0, w + 0.03, 0.06, 0x374151);
+      cyl(0, h + 0.005, 0, w * 0.85, 0.01, shadeHex(BARREL_TONES[v], 0.7));
+      break;
+    case "pallet":
+      box(0, 0.07, 0, w, 0.14, d, 0xa16207);
+      [-1, 1].forEach((sx) => [-1, 1].forEach((sz) => box(sx * w / 4, 0.44, sz * d / 4, w / 2 - 0.05, 0.6, d / 2 - 0.05, 0xc8a165)));
+      box(0, 1.04, 0, w / 2, 0.6, d / 2, 0xd6b47a);
+      box(0, 0.74, d / 2 + 0.005, 0.25, 0.04, 0.01, 0x1f2937);
+      break;
+    case "desk":
+      box(0, 0.74, 0, w, 0.06, d, wood);
+      legs(0.71, 0.06, 0.06, 0x374151);
+      box(0, 0.83, -d / 2 + 0.2, 0.06, 0.14, 0.06, 0x111827);
+      box(0, 1.05, -d / 2 + 0.2, 0.62, 0.4, 0.04, 0x111827);
+      glow(0, 1.05, -d / 2 + 0.225, 0.56, 0.34, 0.01, 0x38bdf8);
+      box(0, 0.785, 0.05, 0.45, 0.03, 0.15, 0x374151);
+      box(0.35, 0.78, 0.08, 0.08, 0.03, 0.12, 0x374151);
+      cyl(-w / 2 + 0.2, 0.82, 0.1, 0.08, 0.1, 0xf8fafc);
+      box(-w / 2 + 0.3, 0.79, -0.15, 0.3, 0.04, 0.22, 0xffffff);
+      break;
+    case "officeChair":
+      cyl(0, 0.04, 0, 0.55, 0.06, 0x111827);
+      cyl(0, 0.25, 0, 0.06, 0.4, 0x6b7280);
+      box(0, 0.48, 0, w, 0.08, d, 0x1f2937);
+      box(0, 0.8, -d / 2 + 0.05, w, 0.55, 0.08, 0x1f2937);
+      break;
+    case "cooler":
+      box(0, 0.5, 0, w, 1, d, 0xf8fafc);
+      cyl(0, 1.2, 0, 0.3, 0.4, 0x60a5fa);
+      box(0, 0.75, d / 2 + 0.02, 0.06, 0.06, 0.04, 0x2563eb);
+      box(0.1, 0.75, d / 2 + 0.02, 0.06, 0.06, 0.04, 0xdc2626);
+      break;
+    case "cabinet":
+      box(0, h / 2, 0, w, h, d, 0x9ca3af);
+      for (let i = 0; i < 4; i += 1) {
+        box(0, (h * (i + 0.5)) / 4, d / 2 + 0.02, 0.18, 0.04, 0.03, 0x4b5563);
+        if (i) box(0, (h * i) / 4, d / 2 + 0.005, w - 0.04, 0.02, 0.01, 0x6b7280);
+      }
+      break;
+    case "plant":
+      cyl(0, 0.2, 0, 0.45, 0.4, 0xb45309);
+      cyl(0, 0.41, 0, 0.4, 0.03, 0x3f2a1a);
+      cyl(0, 0.75, 0, 0.6, 0.55, 0x15803d);
+      cyl(0, 1.1, 0, 0.42, 0.35, 0x16a34a);
+      break;
+    case "lamp":
+      cyl(0, 0.03, 0, 0.36, 0.06, 0x374151);
+      cyl(0, 0.8, 0, 0.05, 1.5, 0x6b7280);
+      glow(0, 1.45, 0, 0.14, 0.14, 0.14, 0xfff1c1);
+      cyl(0, 1.5, 0, 0.45, 0.32, 0xfef3c7);
+      break;
+    default:
+      box(0, h / 2, 0, w, h, d, wood);
+  }
+  return parts;
+}
+
+function mergeColored(list) {
+  const positions = [];
+  const normals = [];
+  const colors = [];
+  const c = new THREE.Color();
+  list.forEach(({ geo, color: hex }) => {
+    const g = geo.index ? geo.toNonIndexed() : geo;
+    const p = g.attributes.position.array;
+    const n = g.attributes.normal.array;
+    c.setHex(hex);
+    for (let i = 0; i < p.length; i += 3) {
+      positions.push(p[i], p[i + 1], p[i + 2]);
+      normals.push(n[i], n[i + 1], n[i + 2]);
+      colors.push(c.r, c.g, c.b);
+    }
+  });
+  const out = new THREE.BufferGeometry();
+  out.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  out.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
+  out.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+  return out;
+}
+
+function chestTemplates() {
+  const box = (w, h, d, x, y, z, color) => ({ geo: new THREE.BoxGeometry(w, h, d).translate(x, y, z), color });
+  const dome = (radius, length, x, color) => {
+    const geo = new THREE.CylinderGeometry(radius, radius, length, 14, 1, false, 0, Math.PI);
+    geo.rotateZ(Math.PI / 2);
+    geo.scale(1, 0.62, 1);
+    geo.translate(x, 0, 0.375);
+    return { geo, color };
+  };
+  const build = (palette) => {
+    const { wood, groove, band, trim, lock } = palette;
+    const body = [
+      box(1.1, 0.6, 0.75, 0, 0.3, 0, wood),
+      box(1.12, 0.03, 0.77, 0, 0.2, 0, groove),
+      box(1.12, 0.03, 0.77, 0, 0.4, 0, groove),
+      box(1.14, 0.06, 0.79, 0, 0.03, 0, trim),
+      box(1.0, 0.02, 0.65, 0, 0.605, 0, 0x1a0f08),
+      box(1.14, 0.05, 0.07, 0, 0.585, 0.36, trim),
+      box(1.14, 0.05, 0.07, 0, 0.585, -0.36, trim),
+      box(0.07, 0.05, 0.79, 0.535, 0.585, 0, trim),
+      box(0.07, 0.05, 0.79, -0.535, 0.585, 0, trim),
+      box(0.08, 0.62, 0.79, -0.35, 0.31, 0, band),
+      box(0.08, 0.62, 0.79, 0.35, 0.31, 0, band)
+    ];
+    [-1, 1].forEach((sx) => [-1, 1].forEach((sz) => body.push(box(0.07, 0.64, 0.07, sx * 0.55, 0.32, sz * 0.375, trim))));
+    body.push(box(0.2, 0.22, 0.04, 0, 0.47, 0.39, lock));
+    body.push(box(0.05, 0.08, 0.02, 0, 0.45, 0.415, 0x111827));
+    [-1, 1].forEach((sx) => {
+      body.push(box(0.04, 0.05, 0.26, sx * 0.575, 0.42, 0, trim));
+      body.push(box(0.05, 0.12, 0.04, sx * 0.575, 0.38, 0.11, trim));
+      body.push(box(0.05, 0.12, 0.04, sx * 0.575, 0.38, -0.11, trim));
+    });
+    const lid = [
+      dome(0.375, 1.1, 0, wood),
+      dome(0.39, 0.08, -0.35, band),
+      dome(0.39, 0.08, 0.35, band),
+      dome(0.39, 0.06, -0.53, trim),
+      dome(0.39, 0.06, 0.53, trim),
+      box(1.14, 0.05, 0.06, 0, 0.02, 0.75, trim),
+      box(0.14, 0.18, 0.04, 0, -0.04, 0.77, lock)
+    ];
+    return { body: mergeColored(body), lid: mergeColored(lid) };
+  };
+  return {
+    normal: build({ wood: 0x8b5a2b, groove: 0x5c3a1e, band: 0x6b7280, trim: 0x4b5563, lock: 0xd4a017 }),
+    rare: build({ wood: 0x3b2f8f, groove: 0x241c5c, band: 0xfbbf24, trim: 0xf59e0b, lock: 0xfde047 })
+  };
+}
+
+function carParts(hex) {
+  const body = new THREE.Color(hex).getHex();
+  const parts = [];
+  const box = (x, y, z, w, h, d, c, s = "box") => parts.push({ s, x, y, z, w, h, d, c });
+  box(0, 0.55, 0, 1.8, 0.62, 4.2, body);
+  box(0, 0.95, 1.55, 1.74, 0.18, 1.05, body);
+  box(0, 1.2, -0.25, 1.6, 0.58, 2.2, 0x1e3a5f);
+  box(0, 1.52, -0.25, 1.62, 0.08, 2.0, body);
+  box(0, 0.28, 2.12, 1.86, 0.2, 0.16, 0x9ca3af);
+  box(0, 0.28, -2.12, 1.86, 0.2, 0.16, 0x9ca3af);
+  box(0, 0.62, 2.11, 0.7, 0.14, 0.04, 0x374151);
+  [-0.62, 0.62].forEach((x) => {
+    box(x, 0.68, 2.11, 0.34, 0.14, 0.04, 0xfffbe6, "glow");
+    box(x, 0.68, -2.11, 0.34, 0.14, 0.04, 0xdc2626, "glow");
+  });
+  [-0.85, 0.85].forEach((x) => [-1.35, 1.35].forEach((z) => {
+    parts.push({ s: "cyl", x, y: 0.36, z, w: 0.72, h: 0.3, d: 0.72, c: 0x111827, rz: Math.PI / 2 });
+    parts.push({ s: "cyl", x: x * 1.04, y: 0.36, z, w: 0.38, h: 0.28, d: 0.38, c: 0xd1d5db, rz: Math.PI / 2 });
+  }));
+  box(0.92, 1.0, 0.75, 0.08, 0.1, 0.18, body);
+  box(-0.92, 1.0, 0.75, 0.08, 0.1, 0.18, body);
+  return parts;
+}
+
+function lampParts() {
+  return [
+    { s: "cyl", x: 0, y: 0.15, z: 0, w: 0.4, h: 0.3, d: 0.4, c: 0x374151 },
+    { s: "cyl", x: 0, y: 2.6, z: 0, w: 0.14, h: 5, d: 0.14, c: 0x4b5563 },
+    { s: "box", x: 0, y: 5.05, z: 0.75, w: 0.1, h: 0.1, d: 1.6, c: 0x4b5563 },
+    { s: "box", x: 0, y: 4.98, z: 1.45, w: 0.36, h: 0.14, d: 0.6, c: 0x1f2937 },
+    { s: "glow", x: 0, y: 4.9, z: 1.45, w: 0.28, h: 0.04, d: 0.5, c: 0xfff1c1 }
+  ];
+}
+
+function buildRoadGeometry(map) {
+  const city = window.BBWorldCity;
+  const positions = [];
+  const colors = [];
+  const c = new THREE.Color();
+  const ground = (x, z) => BBMapGen.terrainHeight(map, x, z);
+  const tri = (a, b, d) => {
+    [a, b, d].forEach((p) => {
+      positions.push(p[0], p[1], p[2]);
+      colors.push(c.r, c.g, c.b);
+    });
+  };
+  const quad = (a, b, cc, d, hex) => {
+    c.setHex(hex);
+    tri(a, b, cc);
+    tri(a, cc, d);
+  };
+  const near = (x, z, range) => city.nearIntersection(map.intersections, x, z, range);
+  const strip = (points, offA, offB, lift, hexAt, skip) => {
+    for (let i = 0; i < points.length - 1; i += 1) {
+      const p0 = points[i];
+      const p1 = points[i + 1];
+      const mx = (p0.x + p1.x) / 2;
+      const mz = (p0.z + p1.z) / 2;
+      if (skip && skip(mx, mz, i)) continue;
+      const f0 = city.roadFrame(points, i);
+      const f1 = city.roadFrame(points, i + 1);
+      const corner = (p, f, off) => {
+        const x = p.x + f.nx * off;
+        const z = p.z + f.nz * off;
+        return [x, ground(x, z) + lift, z];
+      };
+      quad(corner(p0, f0, offA), corner(p0, f0, offB), corner(p1, f1, offB), corner(p1, f1, offA), hexAt(i));
+    }
+  };
+  const curb = (points, off, liftLow, liftHigh, hex, skip) => {
+    for (let i = 0; i < points.length - 1; i += 1) {
+      const p0 = points[i];
+      const p1 = points[i + 1];
+      if (skip && skip((p0.x + p1.x) / 2, (p0.z + p1.z) / 2)) continue;
+      const f0 = city.roadFrame(points, i);
+      const f1 = city.roadFrame(points, i + 1);
+      const x0 = p0.x + f0.nx * off;
+      const z0 = p0.z + f0.nz * off;
+      const x1 = p1.x + f1.nx * off;
+      const z1 = p1.z + f1.nz * off;
+      const g0 = ground(x0, z0);
+      const g1 = ground(x1, z1);
+      quad([x0, g0 + liftLow, z0], [x1, g1 + liftLow, z1], [x1, g1 + liftHigh, z1], [x0, g0 + liftHigh, z0], hex);
+    }
+  };
+  const flatQuad = (cx, cz, ax, az, along, across, lift, hex) => {
+    const bx = -az;
+    const bz = ax;
+    const pts = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([sa, sb]) => {
+      const x = cx + ax * along * sa / 2 + bx * across * sb / 2;
+      const z = cz + az * along * sa / 2 + bz * across * sb / 2;
+      return [x, ground(x, z) + lift, z];
+    });
+    quad(pts[0], pts[1], pts[2], pts[3], hex);
+  };
+  const hash = (i, k) => {
+    const v = Math.sin(i * 12.9898 + k * 78.233) * 43758.5453;
+    return v - Math.floor(v);
+  };
+  map.roads.forEach((road, roadIndex) => {
+    const half = road.width / 2;
+    const lift = road.kind === "spoke" ? 0.14 : 0.16;
+    const otherHalf = road.kind === "spoke" ? city.RING_WIDTH / 2 : city.SPOKE_WIDTH / 2;
+    const atJunction = (x, z) => near(x, z, otherHalf + 2.4);
+    const asphalt = (i) => {
+      const n = hash(i, roadIndex);
+      const base = n > 0.93 ? 0x2b2b30 : 0x3a3a41;
+      return shadeHex(base, 0.92 + hash(i + 7, roadIndex) * 0.16);
+    };
+    strip(road.points, -half, half, lift, asphalt);
+    const markLift = 0.2;
+    if (road.kind === "spoke") {
+      strip(road.points, -0.22, -0.08, markLift, () => 0xfacc15, atJunction);
+      strip(road.points, 0.08, 0.22, markLift, () => 0xfacc15, atJunction);
+    } else {
+      strip(road.points, -0.08, 0.08, markLift, () => 0xf8fafc, (x, z, i) => atJunction(x, z) || i % 3 === 2);
+    }
+    strip(road.points, -half + 0.3, -half + 0.45, markLift, () => 0xf1f5f9, atJunction);
+    strip(road.points, half - 0.45, half - 0.3, markLift, () => 0xf1f5f9, atJunction);
+    const walkSkip = (x, z) => near(x, z, otherHalf + 2.6);
+    [-1, 1].forEach((sgn) => {
+      const inner = sgn * half;
+      const outer = sgn * (half + 1.9);
+      strip(road.points, Math.min(inner, outer), Math.max(inner, outer), 0.32, (i) => shadeHex(i % 2 ? 0xb4b0aa : 0xa8a29e, 1), walkSkip);
+      curb(road.points, inner, lift - 0.02, 0.32, 0x78716c, walkSkip);
+      curb(road.points, outer, -0.2, 0.32, 0x8a857f, walkSkip);
+      road.points.forEach((p, i) => {
+        if (i % 2 || walkSkip(p.x, p.z)) return;
+        const f = city.roadFrame(road.points, i);
+        const off = sgn * (half + 0.95);
+        flatQuad(p.x + f.nx * off, p.z + f.nz * off, f.tx, f.tz, 0.05, 1.9, 0.325, 0x8a857f);
+      });
+    });
+    road.points.forEach((p, i) => {
+      if (i % 17 !== 8 || near(p.x, p.z, 10)) return;
+      const f = city.roadFrame(road.points, i);
+      const off = (hash(i, roadIndex + 3) - 0.5) * half;
+      flatQuad(p.x + f.nx * off, p.z + f.nz * off, f.tx, f.tz, 0.9, 0.9, lift + 0.03, 0x27272a);
+      flatQuad(p.x + f.nx * off, p.z + f.nz * off, f.tx, f.tz, 0.6, 0.6, lift + 0.04, 0x52525b);
+    });
+  });
+  map.intersections.forEach((it) => {
+    const ux = Math.cos(it.angle);
+    const uz = Math.sin(it.angle);
+    const crossings = [
+      { ax: ux, az: uz, dist: city.RING_WIDTH / 2 + 1.6, width: city.SPOKE_WIDTH },
+      { ax: -uz, az: ux, dist: city.SPOKE_WIDTH / 2 + 1.6, width: city.RING_WIDTH }
+    ];
+    crossings.forEach(({ ax, az, dist, width }) => {
+      [-1, 1].forEach((sgn) => {
+        const cx = it.x + ax * dist * sgn;
+        const cz = it.z + az * dist * sgn;
+        const stripes = Math.floor(width / 0.9);
+        for (let s = 0; s < stripes; s += 1) {
+          const across = (s + 0.5) * (width / stripes) - width / 2;
+          flatQuad(cx - az * across, cz + ax * across, ax, az, 2.2, 0.45, 0.21, 0xf8fafc);
+        }
+        flatQuad(cx + ax * 1.5 * sgn, cz + az * 1.5 * sgn, ax, az, 0.3, width - 0.4, 0.21, 0xf8fafc);
+      });
+    });
+    flatQuad(it.x, it.z, ux, uz, city.RING_WIDTH + 0.4, city.SPOKE_WIDTH + 0.4, 0.17, 0x38383e);
+  });
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+  geo.computeVertexNormals();
+  return geo;
+}
+
+function buildingDecor(map, b) {
+  const rand = BBMapGen.mulberry32((map.seed ^ Math.imul(b.id + 1, 7919)) >>> 0);
+  const parts = [];
+  const t = 0.6;
+  const story = BBMapGen.STORY_H;
+  const paints = WALL_PAINT[b.type] || WALL_PAINT.house;
+  const stairSide = b.w >= b.d ? (b.stairBlock.z > b.z ? 1 : 0) : (b.stairBlock.x > b.x ? 3 : 2);
+  const sides = [
+    { alongX: true, x: b.x, z: b.z - b.d / 2 + t, len: b.w - t * 2, n: 1 },
+    { alongX: true, x: b.x, z: b.z + b.d / 2 - t, len: b.w - t * 2, n: -1 },
+    { alongX: false, x: b.x - b.w / 2 + t, z: b.z, len: b.d - t * 2, n: 1 },
+    { alongX: false, x: b.x + b.w / 2 - t, z: b.z, len: b.d - t * 2, n: -1 }
+  ];
+  const onWall = (side, along, out, y, bw, bh, thick, c, s = "box") => {
+    parts.push(side.alongX
+      ? { s, x: side.x + along, y, z: side.z + side.n * out, w: bw, h: bh, d: thick, c }
+      : { s, x: side.x + side.n * out, y, z: side.z + along, w: thick, h: bh, d: bw, c });
+  };
+  const mirrorStairs = () => ({ x: b.x - (b.stairBlock.x - b.x) * 0.9, z: b.z - (b.stairBlock.z - b.z) * 0.9 });
+  for (let level = 0; level < b.stories; level += 1) {
+    const bottom = b.floor + level * story;
+    const top = level === b.stories - 1 ? b.floor + b.h : b.floor + (level + 1) * story - BBMapGen.SLAB_T;
+    const paint = paints[Math.floor(rand() * paints.length)];
+    const start = parts.length;
+    sides.forEach((side, index) => {
+      const pieces = level === 0 && b.door === index
+        ? [[-side.len / 2, -1.35], [1.35, side.len / 2]]
+        : [[-side.len / 2, side.len / 2]];
+      pieces.forEach(([a, c]) => {
+        onWall(side, (a + c) / 2, 0.025, (bottom + top) / 2, c - a, top - bottom, 0.04, paint);
+        onWall(side, (a + c) / 2, 0.06, bottom + 0.07, c - a, 0.14, 0.05, 0x57534e);
+      });
+      if (level === 0 && b.door === index) onWall(side, 0, 0.025, (bottom + 2.8 + top) / 2, 2.7, top - bottom - 2.8, 0.04, paint);
+      if (index === stairSide || (level === 0 && index === b.door) || b.type === "warehouse") return;
+      const span = side.len + t * 2 - 2;
+      const count = Math.max(1, Math.floor(span / 4.5));
+      const offs = count >= 2
+        ? [((0.5 / count) * span + (1.5 / count) * span) / 2 - span / 2]
+        : [side.len / 2 - 1.4];
+      offs.forEach((along) => {
+        if (rand() < 0.35) return;
+        onWall(side, along, 0.07, bottom + 1.75, 1.1, 0.85, 0.05, 0x3f2a1a);
+        onWall(side, along, 0.1, bottom + 1.75, 0.92, 0.67, 0.02, GOODS_TONES[Math.floor(rand() * GOODS_TONES.length)]);
+      });
+    });
+    const center = mirrorStairs();
+    if (b.type === "warehouse" || b.type === "tower") {
+      const alongX = b.w >= b.d;
+      [-1, 1].forEach((sgn) => {
+        const x = alongX ? center.x + sgn * b.w * 0.22 : center.x;
+        const z = alongX ? center.z : center.z + sgn * b.d * 0.22;
+        parts.push({ s: "glow", x, y: top - 0.06, z, w: alongX ? 2.4 : 0.25, h: 0.06, d: alongX ? 0.25 : 2.4, c: 0xf8fafc });
+      });
+    } else {
+      parts.push({ s: "cyl", x: center.x, y: top - 0.18, z: center.z, w: 0.04, h: 0.36, d: 0.04, c: 0x374151 });
+      parts.push({ s: "glow", x: center.x, y: top - 0.42, z: center.z, w: 0.5, h: 0.14, d: 0.5, c: 0xfff1c1 });
+    }
+    if (b.type === "house" || b.type === "tower") {
+      const rw = Math.min(4, b.w * 0.3);
+      const rd = Math.min(3, b.d * 0.25);
+      const rugY = (level === 0 ? Math.max(BBMapGen.terrainHeight(map, center.x, center.z), b.floor) : bottom) + 0.015;
+      const rug = RUG_TONES[Math.floor(rand() * RUG_TONES.length)];
+      parts.push({ s: "box", x: center.x, y: rugY, z: center.z, w: rw, h: 0.02, d: rd, c: rug });
+      parts.push({ s: "box", x: center.x, y: rugY + 0.012, z: center.z, w: rw - 0.5, h: 0.01, d: rd - 0.5, c: shadeHex(rug, 1.5) });
+    }
+    for (let i = start; i < parts.length; i += 1) parts[i].level = level;
+  }
+  return parts;
+}
+
 function buildWorld(scene, map) {
   const dummy = new THREE.Object3D();
   const color = new THREE.Color();
 
-  const walls = buildInstanced(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial(), map.walls.length);
-  map.walls.forEach((wall, index) => {
-    dummy.position.set(wall.x, wall.y + wall.h / 2, wall.z);
-    dummy.scale.set(wall.w, wall.h, wall.d);
+  const levelParts = new Map(map.buildings.map((b) => [b.id, []]));
+  const addPart = (mesh, index, buildingId, level) => {
+    levelParts.get(buildingId).push({ mesh, index, level, matrix: dummy.matrix.clone() });
+  };
+  const placeBox = (mesh, index, x, y, z, w, h, d) => {
+    dummy.position.set(x, y, z);
+    dummy.scale.set(w, h, d);
     dummy.rotation.set(0, 0, 0);
     dummy.updateMatrix();
-    walls.setMatrixAt(index, dummy.matrix);
-    walls.setColorAt(index, color.set(map.buildings[Math.floor(index / 5)].color));
+    mesh.setMatrixAt(index, dummy.matrix);
+  };
+
+  const wallSegments = [];
+  map.walls.forEach((wall) => {
+    const b = map.buildings[wall.b];
+    for (let level = 0; level < b.stories; level += 1) {
+      const bottom = Math.max(wall.y, level === 0 ? wall.y : b.floor + level * BBMapGen.STORY_H);
+      const top = Math.min(wall.y + wall.h, b.floor + (level + 1) * BBMapGen.STORY_H);
+      if (top - bottom > 0.05) wallSegments.push({ wall, b, level, bottom, top });
+    }
+  });
+  const walls = buildInstanced(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial(), wallSegments.length);
+  wallSegments.forEach((seg, index) => {
+    placeBox(walls, index, seg.wall.x, (seg.bottom + seg.top) / 2, seg.wall.z, seg.wall.w, seg.top - seg.bottom, seg.wall.d);
+    walls.setColorAt(index, color.set(seg.b.color));
+    addPart(walls, index, seg.b.id, seg.level);
   });
   scene.add(walls);
 
+  const windowSpots = [];
+  map.buildings.forEach((b) => {
+    const sides = [
+      { x: b.x, z: b.z - b.d / 2 + 0.3, len: b.w, alongX: true, door: b.door === 0 },
+      { x: b.x, z: b.z + b.d / 2 - 0.3, len: b.w, alongX: true, door: b.door === 1 },
+      { x: b.x - b.w / 2 + 0.3, z: b.z, len: b.d, alongX: false, door: b.door === 2 },
+      { x: b.x + b.w / 2 - 0.3, z: b.z, len: b.d, alongX: false, door: b.door === 3 }
+    ];
+    for (let level = 0; level < b.stories; level += 1) {
+      sides.forEach((side) => {
+        const count = Math.max(1, Math.floor((side.len - 2) / 4.5));
+        for (let i = 0; i < count; i += 1) {
+          const off = (i + 0.5) / count * (side.len - 2) - (side.len - 2) / 2;
+          if (level === 0 && side.door && Math.abs(off) < 2.6) continue;
+          windowSpots.push({
+            b,
+            level,
+            x: side.alongX ? side.x + off : side.x,
+            z: side.alongX ? side.z : side.z + off,
+            y: b.floor + level * BBMapGen.STORY_H + 2.2,
+            alongX: side.alongX
+          });
+        }
+      });
+    }
+  });
+  const windows = buildInstanced(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshLambertMaterial({ color: 0x93c5fd, emissive: 0x1e3a8a }),
+    windowSpots.length,
+    false
+  );
+  windowSpots.forEach((spot, index) => {
+    placeBox(windows, index, spot.x, spot.y, spot.z, spot.alongX ? 1.5 : 0.72, 1.3, spot.alongX ? 0.72 : 1.5);
+    addPart(windows, index, spot.b.id, spot.level);
+  });
+  scene.add(windows);
+
+  const slabCount = map.buildings.reduce((sum, b) => sum + b.slabs.length, 0);
+  const slabs = buildInstanced(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial(), slabCount);
+  let slabIndex = 0;
+  map.buildings.forEach((b) => {
+    b.slabs.forEach((slab) => {
+      placeBox(slabs, slabIndex, slab.x, slab.y - BBMapGen.SLAB_T / 2, slab.z, slab.w, BBMapGen.SLAB_T, slab.d);
+      slabs.setColorAt(slabIndex, color.setHex(FLOOR_TONES[b.type] || FLOOR_TONES.house));
+      addPart(slabs, slabIndex, b.id, slab.level);
+      slabIndex += 1;
+    });
+  });
+  scene.add(slabs);
+
+  const STEPS = 12;
+  const stepCount = map.buildings.reduce((sum, b) => sum + b.ramps.length * STEPS, 0);
+  const steps = buildInstanced(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial({ color: 0xa8a29e }), stepCount);
+  let stepIndex = 0;
+  map.buildings.forEach((b) => {
+    b.ramps.forEach((ramp) => {
+      const run = ramp.len / STEPS;
+      for (let i = 0; i < STEPS; i += 1) {
+        const along = -ramp.len / 2 + (ramp.dir > 0 ? i + 0.5 : STEPS - i - 0.5) * run;
+        const top = ramp.y0 + ((i + 1) / STEPS) * (ramp.y1 - ramp.y0);
+        const x = ramp.axis === "x" ? ramp.cx + along : ramp.cx;
+        const z = ramp.axis === "x" ? ramp.cz : ramp.cz + along;
+        const h = top - ramp.y0;
+        placeBox(steps, stepIndex, x, ramp.y0 + h / 2, z, ramp.axis === "x" ? run : ramp.wid, h, ramp.axis === "x" ? ramp.wid : run);
+        addPart(steps, stepIndex, b.id, ramp.level);
+        stepIndex += 1;
+      }
+    });
+  });
+  scene.add(steps);
+
   const roofs = buildInstanced(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial(), map.buildings.length);
-  const floors = buildInstanced(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial({ color: 0x8b6b4a }), map.buildings.length, false);
-  const roofMatrices = [];
+  const floors = buildInstanced(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial(), map.buildings.length, false);
   map.buildings.forEach((b, index) => {
-    dummy.position.set(b.x, b.floor + b.h + 0.25, b.z);
-    dummy.scale.set(b.w + 0.6, 0.5, b.d + 0.6);
-    dummy.updateMatrix();
-    roofs.setMatrixAt(index, dummy.matrix);
-    roofMatrices.push(dummy.matrix.clone());
+    placeBox(roofs, index, b.x, b.floor + b.h + 0.25, b.z, b.w + 0.6, 0.5, b.d + 0.6);
     roofs.setColorAt(index, color.set(b.roof));
-    dummy.position.set(b.x, b.floor + 0.02, b.z);
-    dummy.scale.set(b.w - 0.4, 0.1, b.d - 0.4);
-    dummy.updateMatrix();
-    floors.setMatrixAt(index, dummy.matrix);
+    addPart(roofs, index, b.id, b.stories);
+    placeBox(floors, index, b.x, b.floor + 0.02, b.z, b.w - 0.4, 0.1, b.d - 0.4);
+    floors.setColorAt(index, color.setHex(FLOOR_TONES[b.type] || FLOOR_TONES.house));
   });
   scene.add(roofs, floors);
+
+  const detailEntries = [];
+  map.buildings.forEach((b) => {
+    buildingDecor(map, b).forEach((part) => detailEntries.push({ part, buildingId: b.id, level: part.level, ox: 0, oy: 0, oz: 0, yaw: 0, prop: null }));
+  });
+  map.props.forEach((prop) => {
+    propParts(prop).forEach((part) => detailEntries.push({ part, buildingId: prop.buildingId, level: prop.level, ox: prop.x, oy: prop.y, oz: prop.z, yaw: prop.yaw || 0, prop }));
+  });
+  (map.cars || []).forEach((car) => {
+    carParts(car.color).forEach((part) => detailEntries.push({ part, buildingId: null, level: 0, ox: car.x, oy: car.y + 0.14, oz: car.z, yaw: car.yaw, prop: null }));
+  });
+  (map.lamps || []).forEach((lamp) => {
+    lampParts().forEach((part) => detailEntries.push({ part, buildingId: null, level: 0, ox: lamp.x, oy: lamp.y + 0.32, oz: lamp.z, yaw: lamp.yaw, prop: null }));
+  });
+  const detailMeshes = {
+    box: buildInstanced(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial(), detailEntries.filter((e) => e.part.s === "box").length, false),
+    cyl: buildInstanced(new THREE.CylinderGeometry(0.5, 0.5, 1, 12), new THREE.MeshLambertMaterial(), detailEntries.filter((e) => e.part.s === "cyl").length, false),
+    glow: buildInstanced(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial(), detailEntries.filter((e) => e.part.s === "glow").length, false)
+  };
+  const detailCounts = { box: 0, cyl: 0, glow: 0 };
+  const propVisuals = new Map();
+  detailEntries.forEach(({ part, buildingId, level, ox, oy, oz, yaw, prop }) => {
+    const mesh = detailMeshes[part.s];
+    const index = detailCounts[part.s]++;
+    const cos = Math.cos(yaw);
+    const sin = Math.sin(yaw);
+    dummy.position.set(ox + part.x * cos + part.z * sin, oy + part.y, oz - part.x * sin + part.z * cos);
+    dummy.rotation.set(0, yaw, part.rz || 0, "YXZ");
+    dummy.scale.set(part.w, part.h, part.d);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(index, dummy.matrix);
+    mesh.setColorAt(index, color.setHex(part.c));
+    if (buildingId === null) return;
+    const entry = { mesh, index, level, matrix: dummy.matrix.clone() };
+    if (prop) {
+      entry.propId = prop.id;
+      if (!propVisuals.has(prop.id)) {
+        propVisuals.set(prop.id, {
+          parts: [],
+          position: new THREE.Vector3(prop.x, prop.y + prop.h / 2, prop.z),
+          state: { ...prop }
+        });
+      }
+      propVisuals.get(prop.id).parts.push({ mesh, index });
+    }
+    levelParts.get(buildingId).push(entry);
+  });
+  dummy.rotation.set(0, 0, 0, "XYZ");
+  Object.values(detailMeshes).forEach((mesh) => scene.add(mesh));
 
   const pines = map.trees.filter((tree) => tree.kind === "pine");
   const rounds = map.trees.filter((tree) => tree.kind !== "pine");
@@ -530,52 +1189,68 @@ function buildWorld(scene, map) {
   scene.add(rocks);
 
   const chests = new Map();
-  const chestBody = new THREE.BoxGeometry(1.1, 0.6, 0.75);
-  const chestLid = new THREE.BoxGeometry(1.14, 0.25, 0.79);
-  const bodyMat = new THREE.MeshLambertMaterial({ color: 0x8b5a2b });
-  const lidMat = new THREE.MeshLambertMaterial({ color: 0xd4a017, emissive: 0x3a2a00 });
-  const rareBodyMat = new THREE.MeshLambertMaterial({ color: 0x312e81, emissive: 0x1e1b4b });
-  const rareLidMat = new THREE.MeshLambertMaterial({ color: 0xfbbf24, emissive: 0x92400e });
+  const templates = chestTemplates();
+  const chestMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+  const rareChestMat = new THREE.MeshLambertMaterial({ vertexColors: true, emissive: 0x2e1065, side: THREE.DoubleSide });
+  const gemGeo = new THREE.OctahedronGeometry(0.07, 0);
+  const sparkGeo = new THREE.OctahedronGeometry(0.06, 0);
+  const gemMat = new THREE.MeshBasicMaterial({ color: 0xe879f9 });
+  const sparkMat = new THREE.MeshBasicMaterial({ color: 0xfde68a, transparent: true, opacity: 0.9 });
   map.chests.forEach((chest) => {
     const rare = Boolean(chest.rare);
     const group = new THREE.Group();
-    const body = new THREE.Mesh(chestBody, rare ? rareBodyMat.clone() : bodyMat);
-    body.position.y = 0.3;
+    const tpl = rare ? templates.rare : templates.normal;
+    const body = new THREE.Mesh(tpl.body, rare ? rareChestMat.clone() : chestMat.clone());
     body.castShadow = true;
-    const lid = new THREE.Mesh(chestLid, rare ? rareLidMat.clone() : lidMat);
-    lid.position.y = 0.72;
-    lid.castShadow = true;
+    const lid = new THREE.Group();
+    lid.position.set(0, 0.6, -0.375);
+    const lidMesh = new THREE.Mesh(tpl.lid, body.material);
+    lidMesh.castShadow = true;
+    lid.add(lidMesh);
     group.add(body, lid);
     if (rare) {
       group.scale.setScalar(1.12);
+      [[0, 0.47, 0.42], [-0.35, 0.3, 0.41], [0.35, 0.3, 0.41]].forEach(([x, y, z]) => {
+        const gem = new THREE.Mesh(gemGeo, gemMat);
+        gem.position.set(x, y, z);
+        body.add(gem);
+      });
+      const crown = new THREE.Mesh(gemGeo, gemMat);
+      crown.position.set(0, 0.24, 0.375);
+      crown.scale.setScalar(1.4);
+      lid.add(crown);
       const aura = new THREE.Mesh(
-        new THREE.BoxGeometry(1.35, 1.05, 1.05),
-        new THREE.MeshBasicMaterial({ color: 0xa855f7, transparent: true, opacity: 0.22, depthWrite: false })
+        new THREE.SphereGeometry(0.95, 16, 12),
+        new THREE.MeshBasicMaterial({ color: 0xa855f7, transparent: true, opacity: 0.16, depthWrite: false })
       );
-      aura.position.y = 0.55;
+      aura.position.y = 0.5;
+      aura.scale.set(1.15, 0.85, 0.95);
       group.add(aura);
+      const sparks = new THREE.Group();
+      sparks.position.y = 0.55;
+      for (let i = 0; i < 6; i += 1) {
+        const spark = new THREE.Mesh(sparkGeo, sparkMat);
+        const a = (i / 6) * Math.PI * 2;
+        spark.position.set(Math.cos(a) * 0.85, Math.sin(i * 1.7) * 0.25, Math.sin(a) * 0.85);
+        sparks.add(spark);
+      }
+      group.add(sparks);
       const light = new THREE.PointLight(0xfbbf24, 0.85, 7);
       light.position.y = 1.1;
       group.add(light);
-      group.userData.glow = { body, lid, aura, light, phase: chest.id * 0.7 };
+      group.userData.glow = { body, aura, sparks, light, phase: chest.id * 0.7 };
     }
-    const inside = BBMapGen.buildingAt(map, chest.x, chest.z);
-    group.position.set(chest.x, inside ? inside.floor + 0.05 : BBMapGen.terrainHeight(map, chest.x, chest.z), chest.z);
+    group.position.set(chest.x, chest.y + 0.05, chest.z);
     group.rotation.y = (chest.id * 1.7) % (Math.PI * 2);
     group.userData = { ...group.userData, lid, opened: false, openT: 0, rare };
     scene.add(group);
     chests.set(chest.id, group);
+    const inside = BBMapGen.buildingAt(map, chest.x, chest.z);
+    if (inside) levelParts.get(inside.id).push({ object: group, level: chest.level });
   });
 
-  const roadMat = new THREE.MeshLambertMaterial({ color: 0x3d3d45 });
-  const roads = buildInstanced(new THREE.BoxGeometry(1, 1, 1), roadMat, map.roads.length, false);
-  map.roads.forEach((road, index) => {
-    dummy.position.set(road.x, road.y + 0.06, road.z);
-    dummy.scale.set(road.w, 0.12, road.d);
-    dummy.rotation.set(0, 0, 0);
-    dummy.updateMatrix();
-    roads.setMatrixAt(index, dummy.matrix);
-  });
+  const roads = new THREE.Mesh(buildRoadGeometry(map), new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
+  roads.receiveShadow = true;
   scene.add(roads);
 
   const doorFrameMat = new THREE.MeshLambertMaterial({ color: 0x5c4033 });
@@ -585,32 +1260,21 @@ function buildWorld(scene, map) {
     const group = new THREE.Group();
     group.position.set(door.x, door.y, door.z);
     group.rotation.y = door.yaw;
-    const frame = new THREE.Mesh(new THREE.BoxGeometry(door.w + 0.35, door.h + 0.2, 0.18), doorFrameMat);
-    frame.position.y = door.h / 2;
-    frame.castShadow = true;
-    const panel = new THREE.Mesh(new THREE.BoxGeometry(door.w - 0.15, door.h - 0.15, 0.12), doorPanelMat);
+    const postGeo = new THREE.BoxGeometry(0.18, door.h + 0.2, 0.7);
+    const leftPost = new THREE.Mesh(postGeo, doorFrameMat);
+    leftPost.position.set(-door.w / 2 - 0.09, (door.h + 0.2) / 2, 0);
+    const rightPost = new THREE.Mesh(postGeo, doorFrameMat);
+    rightPost.position.set(door.w / 2 + 0.09, (door.h + 0.2) / 2, 0);
+    const header = new THREE.Mesh(new THREE.BoxGeometry(door.w + 0.36, 0.2, 0.7), doorFrameMat);
+    header.position.y = door.h + 0.1;
+    const panelGeo = new THREE.BoxGeometry(door.w - 0.15, door.h - 0.15, 0.12);
+    panelGeo.translate((door.w - 0.15) / 2, 0, 0);
+    const panel = new THREE.Mesh(panelGeo, doorPanelMat);
     panel.position.set(-(door.w - 0.15) / 2, door.h / 2, 0.08);
     panel.castShadow = true;
-    group.add(frame, panel);
+    group.add(leftPost, rightPost, header, panel);
     scene.add(group);
     doorVisuals.set(door.id, { group, panel, state: { ...door } });
-  });
-
-  const propColors = {
-    desk: 0x6b4423,
-    shelf: 0x4a3728,
-    crate: 0xb8860b,
-    chair: 0x8b4513,
-    counter: 0x708090
-  };
-  const propVisuals = new Map();
-  map.props.forEach((prop) => {
-    const mat = new THREE.MeshLambertMaterial({ color: propColors[prop.type] || 0x888888 });
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(prop.w, prop.h, prop.d), mat);
-    mesh.position.set(prop.x, prop.y + prop.h / 2, prop.z);
-    mesh.castShadow = true;
-    scene.add(mesh);
-    propVisuals.set(prop.id, { mesh, state: { ...prop } });
   });
 
   const stoplightVisuals = new Map();
@@ -623,25 +1287,34 @@ function buildWorld(scene, map) {
   ];
   map.stoplights.forEach((light) => {
     const group = new THREE.Group();
-    group.position.set(light.x, light.y, light.z);
+    group.position.set(light.x, light.y + 0.32, light.z);
+    group.rotation.y = light.yaw || 0;
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.36, 0.3, 10), poleMat);
+    base.position.y = 0.15;
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, 3.6, 8), poleMat);
     pole.position.y = 1.8;
     pole.castShadow = true;
     const box = new THREE.Mesh(new THREE.BoxGeometry(0.55, 1.35, 0.45), housingMat);
     box.position.y = 3.55;
-    group.add(pole, box);
+    const back = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.6, 0.05), housingMat);
+    back.position.set(0, 3.55, -0.25);
+    const button = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.22, 0.12), new THREE.MeshLambertMaterial({ color: 0xfacc15 }));
+    button.position.set(0, 1.1, 0.14);
+    group.add(base, pole, box, back, button);
     const bulbs = [];
     for (let i = 0; i < 3; i += 1) {
       const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.11, 10, 10), bulbMats[i]);
       bulb.position.set(0, 3.95 - i * 0.38, 0.28);
-      group.add(bulb);
+      const visor = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.04, 0.16), housingMat);
+      visor.position.set(0, 4.09 - i * 0.38, 0.3);
+      group.add(bulb, visor);
       bulbs.push(bulb);
     }
     scene.add(group);
     stoplightVisuals.set(light.id, { group, bulbs, bulbMats, state: { ...light } });
   });
 
-  return { roofs, roofMatrices, chests, doorVisuals, propVisuals, stoplightVisuals };
+  return { levelParts, chests, doorVisuals, propVisuals, stoplightVisuals };
 }
 
 function syncDoorVisual(entry) {
@@ -657,7 +1330,10 @@ function syncDoorVisual(entry) {
 
 function syncPropVisual(entry) {
   if (!entry || !entry.state.broken) return;
-  entry.mesh.visible = false;
+  entry.parts.forEach(({ mesh, index }) => {
+    mesh.setMatrixAt(index, HIDDEN_MATRIX);
+    mesh.instanceMatrix.needsUpdate = true;
+  });
 }
 
 function syncStoplightVisual(entry) {
@@ -778,8 +1454,8 @@ function createGame({ root, socket, start }) {
     serverElapsedAt: performance.now(),
     displayLava: 0,
     displayWater: 0,
-    hiddenRoofs: new Set(),
-    hiddenRoofsKey: "",
+    cuts: new Map(),
+    cutKey: "",
     shake: 0,
     raf: 0,
     lastInputAt: 0,
@@ -844,8 +1520,7 @@ function createGame({ root, socket, start }) {
     ring.rotation.x = -Math.PI / 2;
     ring.position.y = 0.08;
     group.add(sprite, ring);
-    const inside = BBMapGen.buildingAt(map, entry.x, entry.z);
-    group.position.set(entry.x, Math.max(entry.y, inside ? inside.floor : -99), entry.z);
+    group.position.set(entry.x, entry.y, entry.z);
     group.userData = { entry, sprite, phase: Math.random() * 6 };
     scene.add(group);
     g.loot.set(entry.id, group);
@@ -951,7 +1626,7 @@ function createGame({ root, socket, start }) {
           if (entry) {
             entry.state.broken = true;
             syncPropVisual(entry);
-            const p = entry.mesh.position;
+            const p = entry.position;
             spawnPoof(p.x, p.y, p.z, 0xa16207, 1);
           }
         } else if (ev.kind === "light") {
@@ -971,7 +1646,7 @@ function createGame({ root, socket, start }) {
     let best = null;
     let bestD = 3.4;
     world.doorVisuals.forEach((entry) => {
-      if (entry.state.broken) return;
+      if (entry.state.broken || Math.abs(entry.state.y - self.group.position.y) > 2.5) return;
       const d = Math.hypot(entry.state.x - self.group.position.x, entry.state.z - self.group.position.z);
       if (d < bestD) {
         bestD = d;
@@ -1135,9 +1810,11 @@ function createGame({ root, socket, start }) {
   function cursorGroundPoint() {
     const ray = cursorRay().ray;
     const point = new THREE.Vector3();
+    const self = g.players.get(g.myId);
+    const capY = self ? self.group.position.y + 0.5 : Infinity;
     for (let t = 1; t < 320; t += 0.75) {
       ray.at(t, point);
-      if (point.y <= BBMapGen.terrainHeight(map, point.x, point.z)) return point;
+      if (point.y <= BBMapGen.groundHeight(map, point.x, point.z, Math.min(point.y, capY))) return point;
     }
     return ray.at(120, point);
   }
@@ -1439,18 +2116,30 @@ function createGame({ root, socket, start }) {
       const glow = chest.userData.glow;
       if (glow && !chest.userData.opened) {
         const pulse = 0.55 + Math.sin(now / 320 + glow.phase) * 0.45;
-        glow.lid.material.emissive.setHex(0x92400e).multiplyScalar(pulse);
-        glow.body.material.emissive.setHex(0x4338ca).multiplyScalar(0.35 + pulse * 0.35);
-        glow.aura.material.opacity = 0.14 + pulse * 0.12;
+        glow.body.material.emissive.setHex(0x4c1d95).multiplyScalar(0.3 + pulse * 0.45);
+        glow.aura.material.opacity = 0.1 + pulse * 0.1;
         glow.light.intensity = 0.55 + pulse * 0.75;
+        glow.sparks.rotation.y = now / 900 + glow.phase;
+        glow.sparks.children.forEach((spark, i) => {
+          spark.position.y = Math.sin(now / 400 + i * 1.7) * 0.3;
+          spark.rotation.y = now / 200;
+        });
       }
       if (!chest.userData.opened || chest.userData.openT >= 1) return;
       chest.userData.openT = Math.min(1, chest.userData.openT + dt * 2);
-      chest.userData.lid.rotation.x = -chest.userData.openT * 1.9;
-      chest.userData.lid.position.set(0, 0.72 + chest.userData.openT * 0.15, -chest.userData.openT * 0.3);
+      const t = chest.userData.openT;
+      chest.userData.lid.rotation.x = -(1 - Math.pow(1 - t, 3)) * 1.95;
       if (chest.userData.openT >= 1) {
-        if (glow) glow.light.intensity = 0;
-        chest.children.forEach((mesh) => {
+        if (glow) {
+          glow.light.intensity = 0;
+          glow.aura.visible = false;
+          glow.sparks.visible = false;
+        }
+        const meshes = [];
+        chest.traverse((obj) => {
+          if (obj.isMesh) meshes.push(obj);
+        });
+        meshes.forEach((mesh) => {
           if (!mesh.material || !mesh.material.color) return;
           mesh.material = mesh.material.clone();
           mesh.material.color.multiplyScalar(0.55);
@@ -1464,7 +2153,7 @@ function createGame({ root, socket, start }) {
     let nearDist = PICKUP_RANGE;
     g.loot.forEach((group) => {
       group.userData.sprite.position.y = 1 + Math.sin(now / 400 + group.userData.phase) * 0.15;
-      if (!self) return;
+      if (!self || Math.abs(group.position.y - self.group.position.y) >= 2.5) return;
       const d = Math.hypot(group.position.x - self.group.position.x, group.position.z - self.group.position.z);
       if (d < nearDist) {
         nearDist = d;
@@ -1504,17 +2193,35 @@ function createGame({ root, socket, start }) {
 
     if (self) {
       const px = self.group.position.x;
+      const py = self.group.position.y;
       const pz = self.group.position.z;
-      const near = new Set(map.buildings
-        .filter((b) => Math.max(0, Math.abs(px - b.x) - b.w / 2) < ROOF_HIDE_RANGE && Math.max(0, Math.abs(pz - b.z) - b.d / 2) < ROOF_HIDE_RANGE)
-        .map((b) => b.id));
-      const key = [...near].join(",");
-      if (key !== g.hiddenRoofsKey) {
-        g.hiddenRoofs.forEach((id) => { if (!near.has(id)) world.roofs.setMatrixAt(id, world.roofMatrices[id]); });
-        near.forEach((id) => world.roofs.setMatrixAt(id, HIDDEN_MATRIX));
-        world.roofs.instanceMatrix.needsUpdate = true;
-        g.hiddenRoofs = near;
-        g.hiddenRoofsKey = key;
+      const cuts = new Map();
+      map.buildings.forEach((b) => {
+        const gapX = Math.abs(px - b.x) - b.w / 2;
+        const gapZ = Math.abs(pz - b.z) - b.d / 2;
+        if (gapX < 0.5 && gapZ < 0.5) cuts.set(b.id, BBMapGen.levelAt(b, py));
+        else if (Math.max(0, gapX) < ROOF_HIDE_RANGE && Math.max(0, gapZ) < ROOF_HIDE_RANGE) cuts.set(b.id, b.stories - 1);
+      });
+      const key = [...cuts].map(([id, level]) => `${id}:${level}`).join(",");
+      if (key !== g.cutKey) {
+        const touched = new Set();
+        const apply = (id, cut) => {
+          world.levelParts.get(id).forEach((part) => {
+            const show = part.level <= cut;
+            if (part.object) {
+              part.object.visible = show;
+              return;
+            }
+            const broken = part.propId !== undefined && world.propVisuals.get(part.propId).state.broken;
+            part.mesh.setMatrixAt(part.index, show && !broken ? part.matrix : HIDDEN_MATRIX);
+            touched.add(part.mesh);
+          });
+        };
+        g.cuts.forEach((_, id) => { if (!cuts.has(id)) apply(id, Infinity); });
+        cuts.forEach((cut, id) => { if (g.cuts.get(id) !== cut) apply(id, cut); });
+        touched.forEach((mesh) => { mesh.instanceMatrix.needsUpdate = true; });
+        g.cuts = cuts;
+        g.cutKey = key;
       }
     }
 
@@ -1562,7 +2269,7 @@ function createGame({ root, socket, start }) {
       target.y + height,
       target.z - Math.cos(g.camYaw) * distance
     );
-    const minY = BBMapGen.terrainHeight(map, desired.x, desired.z) + 1;
+    const minY = Math.max(BBMapGen.terrainHeight(map, desired.x, desired.z), self.group.position.y) + 1;
     desired.y = Math.max(desired.y, minY);
     camera.position.lerp(desired, Math.min(1, dt * 10));
     if (g.shake > 0) {

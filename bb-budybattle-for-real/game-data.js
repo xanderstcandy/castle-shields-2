@@ -399,7 +399,7 @@ const MATCH_PLAYERS = 30;
 const MATCH_KILL_COINS = 10;
 
 const COMPETITIVE_PAYOUTS = {
-  island: [[1, 1, 300], [2, 2, 200], [3, 3, 100]],
+  island: [[1, 1, 300], [2, 2, 200], [3, 3, 100], [4, 8, 3]],
   volcano: [[1, 1, 500], [2, 2, 300], [3, 3, 150], [4, 15, 5]],
   hardVolcano: [[1, 1, 1000], [2, 2, 500], [3, 3, 300], [4, 10, 15], [11, 20, 5]]
 };

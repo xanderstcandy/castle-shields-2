@@ -1673,7 +1673,7 @@ function renderCompetitivePlay() {
       <p class="drop-tagline">Pick an island <span class="tagline-mode">(for real)</span></p>
     </header>
     <nav class="ranked-map-menu" aria-label="Competitive maps">
-      ${rankedMapButton("1st 300 coin, 2nd 200 coin, 3rd 100 coin", "lv1", "competitive")}
+      ${rankedMapButton("1st 300 coin, 2nd 200 coin, 3rd 100 coin, top 8: 3 coin", "lv1", "competitive")}
       ${rankedMapButton("1st 500 coin, 2nd 300 coin, 3rd 150 coin, top 15: 5 coin", "volcano", "competitive")}
       ${rankedMapButton("1st 1000 coin, 2nd 500 coin, 3rd 300 coin, top 10: 15 coin, 11-20th: 5 coin", "erupt", "competitive")}
     </nav>

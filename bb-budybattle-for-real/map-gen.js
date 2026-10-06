@@ -6,7 +6,14 @@
   const CRATER_RADIUS = 18;
   const WALL_THICKNESS = 0.6;
   const DOOR_WIDTH = 2.6;
+  const DOOR_HEIGHT = 2.8;
   const GRID_CELL = 20;
+  const STORY_H = 4.2;
+  const SLAB_T = 0.3;
+  const STAIR_LEN = 7;
+  const LANE_W = 2;
+  const STEP_UP = 0.6;
+  const PLAYER_HEIGHT = 1.8;
 
   const MAP_IDS = ["island", "volcano", "hardVolcano"];
 
@@ -119,18 +126,22 @@
     const height = b.h + 3;
     const side = (cx, cz, w, d, hasDoor, alongX) => {
       if (!hasDoor) {
-        walls.push({ x: cx, z: cz, w, d, y: bottom, h: height });
+        walls.push({ x: cx, z: cz, w, d, y: bottom, h: height, b: b.id });
         return;
       }
       const length = alongX ? w : d;
       const piece = (length - DOOR_WIDTH) / 2;
       const offset = DOOR_WIDTH / 2 + piece / 2;
+      const lintelY = b.floor + DOOR_HEIGHT;
+      const lintelH = b.floor + b.h - lintelY;
       if (alongX) {
-        walls.push({ x: cx - offset, z: cz, w: piece, d, y: bottom, h: height });
-        walls.push({ x: cx + offset, z: cz, w: piece, d, y: bottom, h: height });
+        walls.push({ x: cx - offset, z: cz, w: piece, d, y: bottom, h: height, b: b.id });
+        walls.push({ x: cx + offset, z: cz, w: piece, d, y: bottom, h: height, b: b.id });
+        walls.push({ x: cx, z: cz, w: DOOR_WIDTH, d, y: lintelY, h: lintelH, b: b.id });
       } else {
-        walls.push({ x: cx, z: cz - offset, w, d: piece, y: bottom, h: height });
-        walls.push({ x: cx, z: cz + offset, w, d: piece, y: bottom, h: height });
+        walls.push({ x: cx, z: cz - offset, w, d: piece, y: bottom, h: height, b: b.id });
+        walls.push({ x: cx, z: cz + offset, w, d: piece, y: bottom, h: height, b: b.id });
+        walls.push({ x: cx, z: cz, w, d: DOOR_WIDTH, y: lintelY, h: lintelH, b: b.id });
       }
     };
     side(b.x, b.z - halfD + t / 2, b.w, t, b.door === 0, true);
@@ -140,11 +151,156 @@
   }
 
   const BUILDING_TYPES = [
-    { type: "house", w: [14, 20], d: [14, 20], h: [5.5, 8], weight: 6 },
-    { type: "warehouse", w: [26, 34], d: [20, 28], h: [8, 11], weight: 2 },
-    { type: "tower", w: [11, 14], d: [11, 14], h: [18, 26], weight: 2 },
-    { type: "shop", w: [18, 24], d: [14, 18], h: [5.5, 8], weight: 3 }
+    { type: "house", w: [14, 20], d: [14, 20], stories: [2, 3], weight: 6 },
+    { type: "warehouse", w: [26, 34], d: [20, 28], stories: [2, 2], weight: 2 },
+    { type: "tower", w: [14, 18], d: [14, 18], stories: [4, 6], weight: 2 },
+    { type: "shop", w: [18, 24], d: [14, 18], stories: [2, 3], weight: 3 }
   ];
+
+  function inRect(r, x, z, pad = 0) {
+    return Math.abs(x - r.x) <= r.w / 2 + pad && Math.abs(z - r.z) <= r.d / 2 + pad;
+  }
+
+  function subtractRect(a, h) {
+    const ax0 = a.x - a.w / 2;
+    const ax1 = a.x + a.w / 2;
+    const az0 = a.z - a.d / 2;
+    const az1 = a.z + a.d / 2;
+    const hx0 = Math.max(ax0, h.x - h.w / 2);
+    const hx1 = Math.min(ax1, h.x + h.w / 2);
+    const hz0 = Math.max(az0, h.z - h.d / 2);
+    const hz1 = Math.min(az1, h.z + h.d / 2);
+    const out = [];
+    const push = (x0, x1, z0, z1) => {
+      if (x1 - x0 > 0.01 && z1 - z0 > 0.01) out.push({ x: (x0 + x1) / 2, z: (z0 + z1) / 2, w: x1 - x0, d: z1 - z0 });
+    };
+    push(ax0, ax1, az0, hz0);
+    push(ax0, ax1, hz1, az1);
+    push(ax0, hx0, hz0, hz1);
+    push(hx1, ax1, hz0, hz1);
+    return out;
+  }
+
+  function rampRect(r) {
+    return r.axis === "x"
+      ? { x: r.cx, z: r.cz, w: r.len, d: r.wid }
+      : { x: r.cx, z: r.cz, w: r.wid, d: r.len };
+  }
+
+  function rampSurface(r, x, z) {
+    const along = r.axis === "x" ? x - r.cx : z - r.cz;
+    let u = Math.max(0, Math.min(1, (along + r.len / 2) / r.len));
+    if (r.dir < 0) u = 1 - u;
+    return r.y0 + u * (r.y1 - r.y0);
+  }
+
+  function levelY(b, level) {
+    return b.floor + level * STORY_H;
+  }
+
+  function addStairsAndFloors(b, rand) {
+    const t = WALL_THICKNESS;
+    const alongX = b.w >= b.d;
+    const halfAcross = (alongX ? b.d : b.w) / 2 - t;
+    let side;
+    if (alongX) side = b.door === 0 ? 1 : b.door === 1 ? -1 : (rand() < 0.5 ? -1 : 1);
+    else side = b.door === 2 ? 1 : b.door === 3 ? -1 : (rand() < 0.5 ? -1 : 1);
+    const lanes = [0, 1].map((i) => {
+      const off = side * (halfAcross - LANE_W * (i + 0.5));
+      return alongX ? { cx: b.x, cz: b.z + off } : { cx: b.x + off, cz: b.z };
+    });
+    const axis = alongX ? "x" : "z";
+    b.ramps = [];
+    for (let k = 0; k < b.stories - 1; k += 1) {
+      const lane = lanes[k % 2];
+      b.ramps.push({
+        axis,
+        cx: lane.cx,
+        cz: lane.cz,
+        len: STAIR_LEN,
+        wid: LANE_W,
+        y0: levelY(b, k),
+        y1: levelY(b, k + 1),
+        dir: k % 2 === 0 ? 1 : -1,
+        level: k
+      });
+    }
+    const offAcross = side * (halfAcross - LANE_W);
+    b.stairBlock = alongX
+      ? { x: b.x, z: b.z + offAcross, w: STAIR_LEN + 3, d: LANE_W * 2 + 1 }
+      : { x: b.x + offAcross, z: b.z, w: LANE_W * 2 + 1, d: STAIR_LEN + 3 };
+    const interior = { x: b.x, z: b.z, w: b.w - t * 2, d: b.d - t * 2 };
+    b.slabs = [];
+    for (let level = 1; level < b.stories; level += 1) {
+      const hole = rampRect(b.ramps[level - 1]);
+      subtractRect(interior, hole).forEach((rect) => b.slabs.push({ ...rect, y: levelY(b, level), level }));
+    }
+  }
+
+  function rectsOverlap(a, c, pad = 0) {
+    return Math.abs(a.x - c.x) < (a.w + c.w) / 2 + pad && Math.abs(a.z - c.z) < (a.d + c.d) / 2 + pad;
+  }
+
+  function doorClearRect(b) {
+    if (b.door === 0) return { x: b.x, z: b.z - b.d / 2 + 1.6, w: 3.4, d: 3.2 };
+    if (b.door === 1) return { x: b.x, z: b.z + b.d / 2 - 1.6, w: 3.4, d: 3.2 };
+    if (b.door === 2) return { x: b.x - b.w / 2 + 1.6, z: b.z, w: 3.2, d: 3.4 };
+    return { x: b.x + b.w / 2 - 1.6, z: b.z, w: 3.2, d: 3.4 };
+  }
+
+  function propSpot(map, b, rand, level, spec, placed) {
+    const hw = b.w / 2 - WALL_THICKNESS;
+    const hd = b.d / 2 - WALL_THICKNESS;
+    for (let i = 0; i < 30; i += 1) {
+      let x;
+      let z;
+      let yaw;
+      let fw;
+      let fd;
+      if (spec.wall) {
+        const side = Math.floor(rand() * 4);
+        yaw = [0, Math.PI, Math.PI / 2, -Math.PI / 2][side];
+        const alongX = side < 2;
+        fw = alongX ? spec.w : spec.d;
+        fd = alongX ? spec.d : spec.w;
+        if (alongX) {
+          x = b.x + (rand() - 0.5) * Math.max(0, hw * 2 - fw - 0.4);
+          z = side === 0 ? b.z - hd + fd / 2 + 0.08 : b.z + hd - fd / 2 - 0.08;
+        } else {
+          z = b.z + (rand() - 0.5) * Math.max(0, hd * 2 - fd - 0.4);
+          x = side === 2 ? b.x - hw + fw / 2 + 0.08 : b.x + hw - fw / 2 - 0.08;
+        }
+      } else {
+        const quarter = Math.floor(rand() * 4);
+        yaw = (quarter * Math.PI) / 2;
+        fw = quarter % 2 ? spec.d : spec.w;
+        fd = quarter % 2 ? spec.w : spec.d;
+        x = b.x + (rand() - 0.5) * Math.max(0, hw * 2 - fw - 1.6);
+        z = b.z + (rand() - 0.5) * Math.max(0, hd * 2 - fd - 1.6);
+      }
+      const rect = { x, z, w: fw, d: fd };
+      if (rectsOverlap(rect, b.stairBlock, 0.3)) continue;
+      if (level === 0 && rectsOverlap(rect, doorClearRect(b))) continue;
+      if (placed.some((other) => rectsOverlap(rect, other, 0.35))) continue;
+      placed.push(rect);
+      const y = level === 0 ? Math.max(terrainHeight(map, x, z), b.floor) : levelY(b, level);
+      return { x, z, y, level, yaw };
+    }
+    return null;
+  }
+
+  function interiorSpot(map, b, rand, level, pad = 1.6) {
+    const innerW = b.w - pad * 2;
+    const innerD = b.d - pad * 2;
+    for (let i = 0; i < 24; i += 1) {
+      const x = b.x + (rand() - 0.5) * innerW;
+      const z = b.z + (rand() - 0.5) * innerD;
+      if (inRect(b.stairBlock, x, z, 0.6)) continue;
+      const y = level === 0 ? Math.max(terrainHeight(map, x, z), b.floor) : levelY(b, level);
+      return { x, z, y, level };
+    }
+    return null;
+  }
 
   const BUILDING_COLORS = ["#e2c799", "#c9a27e", "#a7b8c8", "#d8d2c4", "#b9c99a", "#d4a5a5", "#9fb3c8", "#e8dcc0"];
   const ROOF_COLORS = ["#7f1d1d", "#374151", "#1e3a5f", "#4b3621", "#3f6212", "#5b21b6"];
@@ -175,7 +331,24 @@
   }
 
   function generateMap(mapId, seed) {
-    const map = { id: mapId, seed: seed >>> 0, half: MAP_HALF, buildings: [], walls: [], trees: [], rocks: [], chests: [], doors: [], props: [], roads: [], stoplights: [] };
+    const map = {
+      id: mapId,
+      seed: seed >>> 0,
+      half: MAP_HALF,
+      buildings: [],
+      walls: [],
+      trees: [],
+      rocks: [],
+      chests: [],
+      doors: [],
+      props: [],
+      roads: [],
+      intersections: [],
+      stoplights: [],
+      lamps: [],
+      cars: [],
+      carBlocks: []
+    };
     const rand = mulberry32(map.seed);
     const occupied = [];
 
@@ -193,6 +366,7 @@
       if (rand() < 0.5) [w, d] = [d, w];
       const radius = Math.hypot(w, d) / 2 + 4;
       if (overlaps(occupied, x, z, radius)) continue;
+      const stories = kind.stories[0] + Math.floor(rand() * (kind.stories[1] - kind.stories[0] + 1));
       const building = {
         id: map.buildings.length,
         type: kind.type,
@@ -200,7 +374,8 @@
         z,
         w,
         d,
-        h: Math.round(between(rand, kind.h)),
+        stories,
+        h: stories * STORY_H,
         floor: terrainHeight(map, x, z),
         door: Math.floor(rand() * 4),
         color: BUILDING_COLORS[Math.floor(rand() * BUILDING_COLORS.length)],
@@ -208,8 +383,31 @@
       };
       map.buildings.push(building);
       occupied.push({ x, z, radius });
+      addStairsAndFloors(building, rand);
       addBuildingWalls(map.walls, building);
     }
+
+    const city = typeof BBWorldCity !== "undefined" ? BBWorldCity : require("./world-city.js");
+    const roadBlocked = (x, z, margin) => {
+      const r = Math.hypot(x, z);
+      if (terrainHeight(map, x, z) < 1) return true;
+      if (r > coastRadius(map.seed, Math.atan2(z, x)) - 18) return true;
+      if (map.id !== "island" && r < CONE_RADIUS + 15) return true;
+      return map.buildings.some((b) => Math.abs(x - b.x) < b.w / 2 + margin && Math.abs(z - b.z) < b.d / 2 + margin);
+    };
+    const network = city.generateRoads(map, rand, terrainHeight, roadBlocked);
+    map.roads = network.roads;
+    map.intersections = network.intersections;
+    map.roads.forEach((road) => {
+      road.points.forEach((p, i) => {
+        if (i % 2 === 0) occupied.push({ x: p.x, z: p.z, radius: road.width / 2 + 2.6 });
+      });
+    });
+    const street = city.streetFurniture(map, rand, terrainHeight, map.roads, map.intersections);
+    map.stoplights = street.stoplights;
+    map.lamps = street.lamps;
+    map.cars = street.cars;
+    map.carBlocks = street.carBlocks;
 
     tries = 0;
     while (map.trees.length < 320 && tries < 8000) {
@@ -238,16 +436,20 @@
     }
 
     const rareChestBudget = { count: 0, max: 8, min: 4 };
-    const addChest = (x, z, chance) => {
+    const addChest = (x, z, y, level, chance) => {
       let rare = false;
       if (rareChestBudget.count < rareChestBudget.max && rand() < chance) {
         rare = true;
         rareChestBudget.count += 1;
       }
-      map.chests.push({ id: map.chests.length, x, z, rare });
+      map.chests.push({ id: map.chests.length, x, z, y, level, rare });
     };
     map.buildings.forEach((b) => {
-      if (rand() < 0.7) addChest(b.x, b.z, 0.018);
+      for (let level = 0; level < b.stories; level += 1) {
+        if (rand() >= 0.35) continue;
+        const spot = interiorSpot(map, b, rand, level);
+        if (spot) addChest(spot.x, spot.z, spot.y, level, 0.012 + level * 0.006);
+      }
     });
     tries = 0;
     while (map.chests.length < 160 && tries < 4000) {
@@ -257,7 +459,7 @@
       if (terrainHeight(map, x, z) < 1) continue;
       if (map.id !== "island" && Math.hypot(x, z) < CONE_RADIUS * 0.6) continue;
       if (overlaps(occupied, x, z, 1.2)) continue;
-      addChest(x, z, 0.012);
+      addChest(x, z, terrainHeight(map, x, z), 0, 0.012);
       occupied.push({ x, z, radius: 1.2 });
     }
     tries = 0;
@@ -269,17 +471,23 @@
       const z = Math.sin(angle) * r;
       if (terrainHeight(map, x, z) < 1.2) continue;
       if (overlaps(occupied, x, z, 1.4)) continue;
-      map.chests.push({ id: map.chests.length, x, z, rare: true });
+      map.chests.push({ id: map.chests.length, x, z, y: terrainHeight(map, x, z), level: 0, rare: true });
       rareChestBudget.count += 1;
       occupied.push({ x, z, radius: 1.4 });
     }
 
-    const city = typeof BBWorldCity !== "undefined" ? BBWorldCity : require("./world-city.js");
-    map.roads = city.generateRoads(map, rand, terrainHeight, occupied);
-    map.stoplights = city.stoplightsForRoads(map.roads, rand);
+    const chestsByBuilding = new Map();
+    map.chests.forEach((chest) => {
+      const b = buildingAt(map, chest.x, chest.z);
+      if (!b) return;
+      if (!chestsByBuilding.has(b.id)) chestsByBuilding.set(b.id, []);
+      chestsByBuilding.get(b.id).push(chest);
+    });
     map.buildings.forEach((b) => {
       map.doors.push(city.doorForBuilding(b));
-      map.props.push(...city.interiorProps(b, rand));
+      const placed = Array.from({ length: b.stories }, () => []);
+      (chestsByBuilding.get(b.id) || []).forEach((chest) => placed[chest.level].push({ x: chest.x, z: chest.z, w: 1.4, d: 1.4 }));
+      map.props.push(...city.interiorProps(b, rand, (level, spec) => propSpot(map, b, rand, level, spec, placed[level])));
     });
 
     map.grid = buildWallGrid(map.walls);
@@ -338,31 +546,81 @@
     return [...found].map((index) => map.walls[index]);
   }
 
+  function pushOutOfRect(pos, rect, radius) {
+    const halfW = rect.w / 2;
+    const halfD = rect.d / 2;
+    const nearX = Math.max(rect.x - halfW, Math.min(pos.x, rect.x + halfW));
+    const nearZ = Math.max(rect.z - halfD, Math.min(pos.z, rect.z + halfD));
+    const dx = pos.x - nearX;
+    const dz = pos.z - nearZ;
+    const dist = Math.hypot(dx, dz);
+    if (dist >= radius) return;
+    if (dist > 0.0001) {
+      pos.x = nearX + (dx / dist) * radius;
+      pos.z = nearZ + (dz / dist) * radius;
+      return;
+    }
+    const pushLeft = pos.x - (rect.x - halfW);
+    const pushRight = rect.x + halfW - pos.x;
+    const pushUp = pos.z - (rect.z - halfD);
+    const pushDown = rect.z + halfD - pos.z;
+    const min = Math.min(pushLeft, pushRight, pushUp, pushDown);
+    if (min === pushLeft) pos.x = rect.x - halfW - radius;
+    else if (min === pushRight) pos.x = rect.x + halfW + radius;
+    else if (min === pushUp) pos.z = rect.z - halfD - radius;
+    else pos.z = rect.z + halfD + radius;
+  }
+
+  function groundHeight(map, x, z, feetY) {
+    const terrain = terrainHeight(map, x, z);
+    const b = buildingAt(map, x, z);
+    if (!b) return terrain;
+    const limit = (feetY === undefined ? Math.max(terrain, b.floor) : feetY) + STEP_UP;
+    let best = terrain;
+    const consider = (y) => {
+      if (y <= limit && y > best) best = y;
+    };
+    consider(b.floor);
+    b.slabs.forEach((s) => { if (inRect(s, x, z)) consider(s.y); });
+    b.ramps.forEach((r) => { if (inRect(rampRect(r), x, z)) consider(rampSurface(r, x, z)); });
+    consider(b.floor + b.h + 0.5);
+    return best;
+  }
+
+  function ceilingHeight(map, x, z, feetY) {
+    const b = buildingAt(map, x, z);
+    if (!b) return Infinity;
+    let best = Infinity;
+    const consider = (y) => {
+      if (y > feetY + 0.4 && y < best) best = y;
+    };
+    b.slabs.forEach((s) => { if (inRect(s, x, z)) consider(s.y - SLAB_T); });
+    b.ramps.forEach((r) => { if (inRect(rampRect(r), x, z)) consider(r.y0); });
+    consider(b.floor + b.h);
+    return best;
+  }
+
+  function levelAt(b, y) {
+    return Math.max(0, Math.min(b.stories, Math.floor((y - b.floor + 0.8) / STORY_H)));
+  }
+
   function resolveCollision(map, pos, radius, feetY, doors) {
     const extra = activeDoorWalls(doors);
     for (const wall of [...wallsNear(map, pos.x, pos.z), ...extra]) {
-      if (feetY !== undefined && feetY > wall.y + wall.h) continue;
-      const halfW = wall.w / 2;
-      const halfD = wall.d / 2;
-      const nearX = Math.max(wall.x - halfW, Math.min(pos.x, wall.x + halfW));
-      const nearZ = Math.max(wall.z - halfD, Math.min(pos.z, wall.z + halfD));
-      const dx = pos.x - nearX;
-      const dz = pos.z - nearZ;
-      const dist = Math.hypot(dx, dz);
-      if (dist >= radius) continue;
-      if (dist > 0.0001) {
-        pos.x = nearX + (dx / dist) * radius;
-        pos.z = nearZ + (dz / dist) * radius;
-      } else {
-        const pushLeft = pos.x - (wall.x - halfW);
-        const pushRight = wall.x + halfW - pos.x;
-        const pushUp = pos.z - (wall.z - halfD);
-        const pushDown = wall.z + halfD - pos.z;
-        const min = Math.min(pushLeft, pushRight, pushUp, pushDown);
-        if (min === pushLeft) pos.x = wall.x - halfW - radius;
-        else if (min === pushRight) pos.x = wall.x + halfW + radius;
-        else if (min === pushUp) pos.z = wall.z - halfD - radius;
-        else pos.z = wall.z + halfD + radius;
+      if (feetY !== undefined && (feetY > wall.y + wall.h || feetY + PLAYER_HEIGHT < wall.y)) continue;
+      pushOutOfRect(pos, wall, radius);
+    }
+    if (feetY !== undefined) {
+      const b = buildingAt(map, pos.x, pos.z);
+      if (b) {
+        b.ramps.forEach((r) => {
+          if (feetY < r.y0 - PLAYER_HEIGHT + 0.1) return;
+          const rect = rampRect(r);
+          const nearX = Math.max(rect.x - rect.w / 2, Math.min(pos.x, rect.x + rect.w / 2));
+          const nearZ = Math.max(rect.z - rect.d / 2, Math.min(pos.z, rect.z + rect.d / 2));
+          if (feetY + STEP_UP >= rampSurface(r, nearX, nearZ)) return;
+          pushOutOfRect(pos, rect, radius);
+        });
       }
     }
     const pushRound = (list, pad) => {
@@ -380,6 +638,7 @@
     };
     pushRound(map.trees, 0);
     pushRound(map.rocks, 0);
+    if (feetY === undefined || feetY < terrainHeight(map, pos.x, pos.z) + 1.4) pushRound(map.carBlocks, 0);
     pos.x = Math.max(-MAP_HALF, Math.min(MAP_HALF, pos.x));
     pos.z = Math.max(-MAP_HALF, Math.min(MAP_HALF, pos.z));
     return pos;
@@ -434,8 +693,15 @@
     ROCK_STUN_MS,
     WATER_DPS,
     LAVA_DPS,
+    STORY_H,
+    SLAB_T,
+    PLAYER_HEIGHT,
     mulberry32,
     terrainHeight,
+    groundHeight,
+    ceilingHeight,
+    levelAt,
+    rampRect,
     hazardAt,
     generateMap,
     resolveCollision,

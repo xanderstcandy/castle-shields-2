@@ -295,7 +295,7 @@ class Match {
     let best = null;
     let bestD = range;
     this.doors.forEach((door) => {
-      if (door.broken) return;
+      if (door.broken || Math.abs(door.y - p.y) > 2.5) return;
       const d = Math.hypot(door.x - p.x, door.z - p.z);
       if (d < bestD) {
         bestD = d;
@@ -317,7 +317,7 @@ class Match {
     const hit = (tx, tz, range) => inFront(tx, tz, range) && Math.hypot(tx - p.x, tz - p.z) <= range;
     const range = data.MELEE_RANGE + 0.8;
     this.doors.forEach((door) => {
-      if (door.broken || !hit(door.x, door.z, range)) return;
+      if (door.broken || Math.abs(door.y - p.y) > 2.5 || !hit(door.x, door.z, range)) return;
       door.hp -= damage;
       if (door.hp <= 0) {
         door.broken = true;
@@ -327,7 +327,7 @@ class Match {
     });
     this.props.forEach((prop) => {
       if (prop.broken || !hit(prop.x, prop.z, range)) return;
-      if (Math.abs(prop.y - p.y) > 4) return;
+      if (Math.abs(prop.y - p.y) > 2.5) return;
       prop.hp -= damage;
       if (prop.hp <= 0) {
         prop.broken = true;
@@ -393,13 +393,17 @@ class Match {
     }
   }
 
-  dropLoot(x, z, item) {
+  dropLoot(x, z, item, y) {
     const id = this.nextId++;
     const angle = this.rand() * Math.PI * 2;
     const dist = 0.6 + this.rand() * 1.8;
-    const lx = x + Math.cos(angle) * dist;
-    const lz = z + Math.sin(angle) * dist;
-    const entry = { id, x: round2(lx), z: round2(lz), y: round2(mapGen.terrainHeight(this.map, lx, lz)), item };
+    let lx = x + Math.cos(angle) * dist;
+    let lz = z + Math.sin(angle) * dist;
+    if (mapGen.segmentHitsWall(this.map, x, z, lx, lz, y === undefined ? undefined : y + 1, this.doors)) {
+      lx = x;
+      lz = z;
+    }
+    const entry = { id, x: round2(lx), z: round2(lz), y: round2(mapGen.groundHeight(this.map, lx, lz, y)), item };
     this.loot.set(id, entry);
     this.events.push({ k: "loot+", ...entry });
   }
@@ -409,7 +413,7 @@ class Match {
     const place = this.aliveCount();
     p.alive = false;
     p.place = place;
-    p.inv.forEach((item) => { if (item) this.dropLoot(p.x, p.z, item); });
+    p.inv.forEach((item) => { if (item) this.dropLoot(p.x, p.z, item, p.y); });
     p.inv = p.inv.map(() => null);
     this.bbs.forEach((bb) => {
       if (bb.owner === p.id && bb.alive) {
@@ -532,10 +536,11 @@ class Match {
     let target = null;
     if (lootId) {
       const entry = this.loot.get(lootId);
-      if (entry && Math.hypot(entry.x - p.x, entry.z - p.z) <= PICKUP_RANGE) target = entry;
+      if (entry && Math.hypot(entry.x - p.x, entry.z - p.z) <= PICKUP_RANGE && Math.abs(entry.y - p.y) < 2.5) target = entry;
     } else {
       let best = PICKUP_RANGE;
       this.loot.forEach((entry) => {
+        if (Math.abs(entry.y - p.y) >= 2.5) return;
         const d = Math.hypot(entry.x - p.x, entry.z - p.z);
         if (d <= best) {
           best = d;
@@ -639,7 +644,8 @@ class Match {
       return Math.abs(angleDiff(Math.atan2(dx, dz), yaw)) < 0.9;
     };
     this.map.chests.forEach((chest) => {
-      if (!this.chestsOpen.has(chest.id) && inFront(chest.x, chest.z, data.MELEE_RANGE + 0.6)) this.openChest(chest);
+      if (this.chestsOpen.has(chest.id) || Math.abs(chest.y - p.y) > 2.5) return;
+      if (inFront(chest.x, chest.z, data.MELEE_RANGE + 0.6)) this.openChest(chest);
     });
     const mySeat = this.seatHeight(p);
     this.players.forEach((target) => {
@@ -671,11 +677,11 @@ class Match {
     this.events.push({ k: "chest", id: chest.id, rare: rare ? 1 : 0 });
     if (rare) {
       const count = 3 + Math.floor(this.rand() * 3);
-      for (let i = 0; i < count; i += 1) this.dropLoot(chest.x, chest.z, rollRareLoot(this.rand));
-      if (this.rand() < 0.4) this.dropLoot(chest.x, chest.z, rollRareLoot(this.rand));
+      for (let i = 0; i < count; i += 1) this.dropLoot(chest.x, chest.z, rollRareLoot(this.rand), chest.y);
+      if (this.rand() < 0.4) this.dropLoot(chest.x, chest.z, rollRareLoot(this.rand), chest.y);
     } else {
       const count = 1 + Math.floor(this.rand() * 3);
-      for (let i = 0; i < count; i += 1) this.dropLoot(chest.x, chest.z, rollLoot(this.rand));
+      for (let i = 0; i < count; i += 1) this.dropLoot(chest.x, chest.z, rollLoot(this.rand), chest.y);
     }
   }
 
@@ -704,10 +710,12 @@ class Match {
     p.touchingWall = Math.hypot(pos.x - wanted.x, pos.z - wanted.z) > 0.001;
     p.x = pos.x;
     p.z = pos.z;
-    const ground = mapGen.terrainHeight(this.map, p.x, p.z);
+    const ground = mapGen.groundHeight(this.map, p.x, p.z, p.y);
+    const ceiling = mapGen.ceilingHeight(this.map, p.x, p.z, p.y);
     const hasJetpack = p.inv.includes("Jetpack");
     const hasHook = p.inv.includes("Grappling Hook");
     const onGround = p.y <= ground + 0.05;
+    const wasGrounded = p.grounded;
     if (!stunned && input.jump) {
       if (hasJetpack && p.y < ground + 30) p.vy = Math.min(p.vy + 45 * dt, 7);
       else if (onGround) p.vy = JUMP_SPEED;
@@ -715,10 +723,15 @@ class Match {
     }
     p.vy -= GRAVITY * dt;
     p.y += p.vy * dt;
-    if (p.y <= ground) {
+    if (p.vy > 0 && p.y + mapGen.PLAYER_HEIGHT > ceiling) {
+      p.y = Math.max(ground, ceiling - mapGen.PLAYER_HEIGHT);
+      p.vy = 0;
+    }
+    if (p.y <= ground || (wasGrounded && p.vy <= 0 && p.y - ground < 0.55)) {
       p.y = ground;
       p.vy = 0;
     }
+    p.grounded = p.y <= ground + 0.01;
     p.moved = Math.hypot(p.x - before.x, p.z - before.z);
   }
 
@@ -729,7 +742,7 @@ class Match {
     p.moved = Math.hypot(pos.x - mount.x, pos.z - mount.z);
     mount.x = pos.x;
     mount.z = pos.z;
-    mount.y = mapGen.terrainHeight(this.map, mount.x, mount.z);
+    mount.y = mapGen.groundHeight(this.map, mount.x, mount.z, mount.y);
     if (mx || mz) mount.yaw = Math.atan2(mx, mz);
     p.x = mount.x;
     p.z = mount.z;
@@ -781,8 +794,9 @@ class Match {
       if (dist > 60) {
         bb.x = owner.x + 1.5 + bb.radius;
         bb.z = owner.z + 1.5 + bb.radius;
+        bb.y = owner.y;
       }
-      bb.y = mapGen.terrainHeight(this.map, bb.x, bb.z);
+      bb.y = mapGen.groundHeight(this.map, bb.x, bb.z, bb.y);
       bb.yaw = Math.atan2(dx, dz);
     }
     if (target && dist <= stopAt + 0.6) {
@@ -797,7 +811,8 @@ class Match {
     const inHazard = (x, z, y, fireResist) => {
       const ground = mapGen.terrainHeight(this.map, x, z);
       if (waterSurface > 0) {
-        const submerged = y < waterSurface + 0.55 || ground < waterSurface + 0.35;
+        const standing = mapGen.groundHeight(this.map, x, z, y);
+        const submerged = y < waterSurface + 0.55 || standing < waterSurface + 0.35;
         if (submerged) return { dps: mapGen.WATER_DPS, cause: "Drowned" };
       }
       if (hazard.lavaRadius && Math.hypot(x, z) < hazard.lavaRadius && !fireResist && y < ground + 1.5) {
@@ -865,7 +880,8 @@ class Match {
       const ny = proj.y + stepY;
       const nz = proj.z + stepZ;
       if (mapGen.segmentHitsWall(this.map, proj.x, proj.z, nx, nz, ny, this.doors)) return false;
-      if (ny < mapGen.terrainHeight(this.map, nx, nz)) return false;
+      if (ny < mapGen.groundHeight(this.map, nx, nz, proj.y)) return false;
+      if (ny > mapGen.ceilingHeight(this.map, nx, nz, proj.y - 0.5)) return false;
       for (const target of this.players) {
         if (!target.alive || target.id === proj.owner) continue;
         if (Math.hypot(target.x - nx, target.z - nz) < 0.9 && ny > target.y - 0.2 && ny < target.y + 2.2) {
@@ -882,7 +898,7 @@ class Match {
       }
       for (const chest of this.map.chests) {
         if (this.chestsOpen.has(chest.id)) continue;
-        if (Math.hypot(chest.x - nx, chest.z - nz) < 1) {
+        if (Math.hypot(chest.x - nx, chest.z - nz) < 1 && Math.abs(ny - chest.y - 0.4) < 1.2) {
           this.openChest(chest);
           return false;
         }
@@ -1021,6 +1037,7 @@ class Match {
       let near = null;
       let nearDist = 40;
       this.loot.forEach((entry) => {
+        if (Math.abs(entry.y - p.y) >= 2.5) return;
         const d = Math.hypot(entry.x - p.x, entry.z - p.z);
         if (d < nearDist) {
           nearDist = d;
@@ -1037,7 +1054,7 @@ class Match {
     let chest = null;
     let chestDist = 140;
     this.map.chests.forEach((entry) => {
-      if (this.chestsOpen.has(entry.id)) return;
+      if (this.chestsOpen.has(entry.id) || Math.abs(entry.y - p.y) > 2.5) return;
       if (hazard.lavaRadius && Math.hypot(entry.x, entry.z) < hazard.lavaRadius + 25) return;
       if (hazard.waterLevel && mapGen.terrainHeight(this.map, entry.x, entry.z) < hazard.waterLevel + 1.5) return;
       const d = Math.hypot(entry.x - p.x, entry.z - p.z);
