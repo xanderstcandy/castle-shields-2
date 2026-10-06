@@ -140,10 +140,10 @@
   }
 
   const BUILDING_TYPES = [
-    { type: "house", w: [9, 12], d: [9, 12], h: [4, 5], weight: 6 },
-    { type: "warehouse", w: [16, 22], d: [12, 16], h: [6, 7], weight: 2 },
-    { type: "tower", w: [7, 8], d: [7, 8], h: [11, 15], weight: 2 },
-    { type: "shop", w: [12, 14], d: [8, 10], h: [4, 5], weight: 3 }
+    { type: "house", w: [14, 20], d: [14, 20], h: [5.5, 8], weight: 6 },
+    { type: "warehouse", w: [26, 34], d: [20, 28], h: [8, 11], weight: 2 },
+    { type: "tower", w: [11, 14], d: [11, 14], h: [18, 26], weight: 2 },
+    { type: "shop", w: [18, 24], d: [14, 18], h: [5.5, 8], weight: 3 }
   ];
 
   const BUILDING_COLORS = ["#e2c799", "#c9a27e", "#a7b8c8", "#d8d2c4", "#b9c99a", "#d4a5a5", "#9fb3c8", "#e8dcc0"];
@@ -175,12 +175,12 @@
   }
 
   function generateMap(mapId, seed) {
-    const map = { id: mapId, seed: seed >>> 0, half: MAP_HALF, buildings: [], walls: [], trees: [], rocks: [], chests: [] };
+    const map = { id: mapId, seed: seed >>> 0, half: MAP_HALF, buildings: [], walls: [], trees: [], rocks: [], chests: [], doors: [], props: [], roads: [], stoplights: [] };
     const rand = mulberry32(map.seed);
     const occupied = [];
 
     let tries = 0;
-    while (map.buildings.length < 150 && tries < 6000) {
+    while (map.buildings.length < 100 && tries < 6000) {
       tries += 1;
       const angle = rand() * Math.PI * 2;
       const r = 30 + Math.sqrt(rand()) * 320;
@@ -237,8 +237,17 @@
       occupied.push({ x, z, radius: radius + 0.6 });
     }
 
+    const rareChestBudget = { count: 0, max: 8, min: 4 };
+    const addChest = (x, z, chance) => {
+      let rare = false;
+      if (rareChestBudget.count < rareChestBudget.max && rand() < chance) {
+        rare = true;
+        rareChestBudget.count += 1;
+      }
+      map.chests.push({ id: map.chests.length, x, z, rare });
+    };
     map.buildings.forEach((b) => {
-      if (rand() < 0.7) map.chests.push({ id: map.chests.length, x: b.x, z: b.z });
+      if (rand() < 0.7) addChest(b.x, b.z, 0.018);
     });
     tries = 0;
     while (map.chests.length < 160 && tries < 4000) {
@@ -248,12 +257,54 @@
       if (terrainHeight(map, x, z) < 1) continue;
       if (map.id !== "island" && Math.hypot(x, z) < CONE_RADIUS * 0.6) continue;
       if (overlaps(occupied, x, z, 1.2)) continue;
-      map.chests.push({ id: map.chests.length, x, z });
+      addChest(x, z, 0.012);
       occupied.push({ x, z, radius: 1.2 });
     }
+    tries = 0;
+    while (rareChestBudget.count < rareChestBudget.min && tries < 3000) {
+      tries += 1;
+      const angle = rand() * Math.PI * 2;
+      const r = 80 + rand() * (COAST_RADIUS - 100);
+      const x = Math.cos(angle) * r;
+      const z = Math.sin(angle) * r;
+      if (terrainHeight(map, x, z) < 1.2) continue;
+      if (overlaps(occupied, x, z, 1.4)) continue;
+      map.chests.push({ id: map.chests.length, x, z, rare: true });
+      rareChestBudget.count += 1;
+      occupied.push({ x, z, radius: 1.4 });
+    }
+
+    const city = typeof BBWorldCity !== "undefined" ? BBWorldCity : require("./world-city.js");
+    map.roads = city.generateRoads(map, rand, terrainHeight, occupied);
+    map.stoplights = city.stoplightsForRoads(map.roads, rand);
+    map.buildings.forEach((b) => {
+      map.doors.push(city.doorForBuilding(b));
+      map.props.push(...city.interiorProps(b, rand));
+    });
 
     map.grid = buildWallGrid(map.walls);
     return map;
+  }
+
+  function doorCollider(d) {
+    if (!d || d.open || d.broken) return null;
+    const depth = 0.22;
+    const cx = d.x + Math.sin(d.yaw) * depth * 0.5;
+    const cz = d.z + Math.cos(d.yaw) * depth * 0.5;
+    const alongX = Math.abs(Math.sin(d.yaw)) < 0.5;
+    return {
+      x: cx,
+      z: cz,
+      w: alongX ? d.w : depth,
+      d: alongX ? depth : d.w,
+      y: d.y,
+      h: d.h
+    };
+  }
+
+  function activeDoorWalls(doors) {
+    if (!doors || !doors.length) return [];
+    return doors.map(doorCollider).filter(Boolean);
   }
 
   function buildWallGrid(walls) {
@@ -287,8 +338,9 @@
     return [...found].map((index) => map.walls[index]);
   }
 
-  function resolveCollision(map, pos, radius, feetY) {
-    for (const wall of wallsNear(map, pos.x, pos.z)) {
+  function resolveCollision(map, pos, radius, feetY, doors) {
+    const extra = activeDoorWalls(doors);
+    for (const wall of [...wallsNear(map, pos.x, pos.z), ...extra]) {
       if (feetY !== undefined && feetY > wall.y + wall.h) continue;
       const halfW = wall.w / 2;
       const halfD = wall.d / 2;
@@ -333,13 +385,14 @@
     return pos;
   }
 
-  function segmentHitsWall(map, ax, az, bx, bz, y) {
+  function segmentHitsWall(map, ax, az, bx, bz, y, doors) {
+    const extra = activeDoorWalls(doors);
     const steps = Math.ceil(Math.hypot(bx - ax, bz - az) / 1.5);
     for (let i = 1; i <= steps; i += 1) {
       const t = i / steps;
       const x = ax + (bx - ax) * t;
       const z = az + (bz - az) * t;
-      for (const wall of wallsNear(map, x, z)) {
+      for (const wall of [...wallsNear(map, x, z), ...extra]) {
         if (y !== undefined && (y < wall.y || y > wall.y + wall.h)) continue;
         if (Math.abs(x - wall.x) <= wall.w / 2 && Math.abs(z - wall.z) <= wall.d / 2) return true;
       }

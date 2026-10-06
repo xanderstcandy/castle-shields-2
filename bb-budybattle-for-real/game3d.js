@@ -534,24 +534,137 @@ function buildWorld(scene, map) {
   const chestLid = new THREE.BoxGeometry(1.14, 0.25, 0.79);
   const bodyMat = new THREE.MeshLambertMaterial({ color: 0x8b5a2b });
   const lidMat = new THREE.MeshLambertMaterial({ color: 0xd4a017, emissive: 0x3a2a00 });
+  const rareBodyMat = new THREE.MeshLambertMaterial({ color: 0x312e81, emissive: 0x1e1b4b });
+  const rareLidMat = new THREE.MeshLambertMaterial({ color: 0xfbbf24, emissive: 0x92400e });
   map.chests.forEach((chest) => {
+    const rare = Boolean(chest.rare);
     const group = new THREE.Group();
-    const body = new THREE.Mesh(chestBody, bodyMat);
+    const body = new THREE.Mesh(chestBody, rare ? rareBodyMat.clone() : bodyMat);
     body.position.y = 0.3;
     body.castShadow = true;
-    const lid = new THREE.Mesh(chestLid, lidMat);
+    const lid = new THREE.Mesh(chestLid, rare ? rareLidMat.clone() : lidMat);
     lid.position.y = 0.72;
     lid.castShadow = true;
     group.add(body, lid);
+    if (rare) {
+      group.scale.setScalar(1.12);
+      const aura = new THREE.Mesh(
+        new THREE.BoxGeometry(1.35, 1.05, 1.05),
+        new THREE.MeshBasicMaterial({ color: 0xa855f7, transparent: true, opacity: 0.22, depthWrite: false })
+      );
+      aura.position.y = 0.55;
+      group.add(aura);
+      const light = new THREE.PointLight(0xfbbf24, 0.85, 7);
+      light.position.y = 1.1;
+      group.add(light);
+      group.userData.glow = { body, lid, aura, light, phase: chest.id * 0.7 };
+    }
     const inside = BBMapGen.buildingAt(map, chest.x, chest.z);
     group.position.set(chest.x, inside ? inside.floor + 0.05 : BBMapGen.terrainHeight(map, chest.x, chest.z), chest.z);
     group.rotation.y = (chest.id * 1.7) % (Math.PI * 2);
-    group.userData = { lid, opened: false, openT: 0 };
+    group.userData = { ...group.userData, lid, opened: false, openT: 0, rare };
     scene.add(group);
     chests.set(chest.id, group);
   });
 
-  return { roofs, roofMatrices, chests };
+  const roadMat = new THREE.MeshLambertMaterial({ color: 0x3d3d45 });
+  const roads = buildInstanced(new THREE.BoxGeometry(1, 1, 1), roadMat, map.roads.length, false);
+  map.roads.forEach((road, index) => {
+    dummy.position.set(road.x, road.y + 0.06, road.z);
+    dummy.scale.set(road.w, 0.12, road.d);
+    dummy.rotation.set(0, 0, 0);
+    dummy.updateMatrix();
+    roads.setMatrixAt(index, dummy.matrix);
+  });
+  scene.add(roads);
+
+  const doorFrameMat = new THREE.MeshLambertMaterial({ color: 0x5c4033 });
+  const doorPanelMat = new THREE.MeshLambertMaterial({ color: 0x8b6914 });
+  const doorVisuals = new Map();
+  map.doors.forEach((door) => {
+    const group = new THREE.Group();
+    group.position.set(door.x, door.y, door.z);
+    group.rotation.y = door.yaw;
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(door.w + 0.35, door.h + 0.2, 0.18), doorFrameMat);
+    frame.position.y = door.h / 2;
+    frame.castShadow = true;
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(door.w - 0.15, door.h - 0.15, 0.12), doorPanelMat);
+    panel.position.set(-(door.w - 0.15) / 2, door.h / 2, 0.08);
+    panel.castShadow = true;
+    group.add(frame, panel);
+    scene.add(group);
+    doorVisuals.set(door.id, { group, panel, state: { ...door } });
+  });
+
+  const propColors = {
+    desk: 0x6b4423,
+    shelf: 0x4a3728,
+    crate: 0xb8860b,
+    chair: 0x8b4513,
+    counter: 0x708090
+  };
+  const propVisuals = new Map();
+  map.props.forEach((prop) => {
+    const mat = new THREE.MeshLambertMaterial({ color: propColors[prop.type] || 0x888888 });
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(prop.w, prop.h, prop.d), mat);
+    mesh.position.set(prop.x, prop.y + prop.h / 2, prop.z);
+    mesh.castShadow = true;
+    scene.add(mesh);
+    propVisuals.set(prop.id, { mesh, state: { ...prop } });
+  });
+
+  const stoplightVisuals = new Map();
+  const poleMat = new THREE.MeshLambertMaterial({ color: 0x525252 });
+  const housingMat = new THREE.MeshLambertMaterial({ color: 0x1f1f1f });
+  const bulbMats = [
+    new THREE.MeshLambertMaterial({ color: 0xef4444, emissive: 0x991111 }),
+    new THREE.MeshLambertMaterial({ color: 0xeab308, emissive: 0x000000 }),
+    new THREE.MeshLambertMaterial({ color: 0x22c55e, emissive: 0x000000 })
+  ];
+  map.stoplights.forEach((light) => {
+    const group = new THREE.Group();
+    group.position.set(light.x, light.y, light.z);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, 3.6, 8), poleMat);
+    pole.position.y = 1.8;
+    pole.castShadow = true;
+    const box = new THREE.Mesh(new THREE.BoxGeometry(0.55, 1.35, 0.45), housingMat);
+    box.position.y = 3.55;
+    group.add(pole, box);
+    const bulbs = [];
+    for (let i = 0; i < 3; i += 1) {
+      const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.11, 10, 10), bulbMats[i]);
+      bulb.position.set(0, 3.95 - i * 0.38, 0.28);
+      group.add(bulb);
+      bulbs.push(bulb);
+    }
+    scene.add(group);
+    stoplightVisuals.set(light.id, { group, bulbs, bulbMats, state: { ...light } });
+  });
+
+  return { roofs, roofMatrices, chests, doorVisuals, propVisuals, stoplightVisuals };
+}
+
+function syncDoorVisual(entry) {
+  if (!entry) return;
+  const { panel, group, state } = entry;
+  if (state.broken) {
+    group.visible = false;
+    return;
+  }
+  group.visible = true;
+  panel.rotation.y = state.open ? -Math.PI / 2.05 : 0;
+}
+
+function syncPropVisual(entry) {
+  if (!entry || !entry.state.broken) return;
+  entry.mesh.visible = false;
+}
+
+function syncStoplightVisual(entry) {
+  if (!entry || entry.broken || !entry.state.broken) return;
+  entry.group.rotation.z = 0.55;
+  entry.group.position.y -= 0.4;
+  entry.broken = true;
 }
 
 function renderHudShell(root) {
@@ -577,7 +690,7 @@ function renderHudShell(root) {
     <div class="mh-toast" data-hud-toast></div>
     <div class="mh-prompt" data-hud-prompt></div>
     <div class="mh-hotbar" data-hud-hotbar></div>
-    <div class="mh-help">WASD / arrows move · mouse aims · click attack · Space jump · 1-8 or wheel switch · Enter or double-click pick up · B shop · R ride big B.B.s · Q/E or right-drag turn camera · Z scope</div>
+    <div class="mh-help">WASD / arrows move · mouse aims · click attack · Space jump · 1-8 or wheel switch · Enter door / pick up · B shop · R ride big B.B.s · Q/E or right-drag turn camera · Z scope</div>
     </div>
     <div class="mh-shop" data-hud-shop hidden></div>
   `);
@@ -620,6 +733,7 @@ function createGame({ root, socket, start }) {
   water.position.y = 0;
   scene.add(water);
   const world = buildWorld(scene, map);
+  world.doorVisuals.forEach(syncDoorVisual);
 
   renderHudShell(root);
   const hud = (key) => root.querySelector(`[data-hud-${key}]`);
@@ -744,11 +858,16 @@ function createGame({ root, socket, start }) {
     g.loot.delete(id);
   }
 
-  function openChest(id) {
+  function openChest(id, rare) {
     const chest = world.chests.get(id);
     if (!chest || chest.userData.opened) return;
     chest.userData.opened = true;
-    spawnPoof(chest.position.x, chest.position.y + 0.8, chest.position.z, 0xfde68a, 1.4);
+    const isRare = rare || chest.userData.rare;
+    spawnPoof(chest.position.x, chest.position.y + 0.8, chest.position.z, isRare ? 0xc084fc : 0xfde68a, isRare ? 2.2 : 1.4);
+    const self = g.players.get(g.myId);
+    if (isRare && self && Math.hypot(chest.position.x - self.group.position.x, chest.position.z - self.group.position.z) < 10) {
+      toast("Rare chest — premium loot!");
+    }
   }
 
   function ensurePlayer(id) {
@@ -791,7 +910,7 @@ function createGame({ root, socket, start }) {
     events.forEach((ev) => {
       if (ev.k === "loot+") addLoot(ev);
       else if (ev.k === "loot-") removeLoot(ev.id);
-      else if (ev.k === "chest") openChest(ev.id);
+      else if (ev.k === "chest") openChest(ev.id, ev.rare);
       else if (ev.k === "kill") {
         const victim = nameOf(ev.b);
         addFeed(ev.a ? `${nameOf(ev.a)} knocked out ${victim}` : `${victim} — ${ev.cause || "out"}`);
@@ -812,14 +931,89 @@ function createGame({ root, socket, start }) {
         if (bb) spawnPoof(bb.group.position.x, bb.group.position.y + bb.model.height * 0.5, bb.group.position.z, 0xfca5a5, 1.2 + bb.model.height * 0.4);
       } else if (ev.k === "drink" && ev.id === g.myId) {
         toast(`Drank ${ev.item}`);
+      } else if (ev.k === "door") {
+        const entry = world.doorVisuals.get(ev.id);
+        if (entry) {
+          entry.state.open = Boolean(ev.open);
+          syncDoorVisual(entry);
+        }
+      } else if (ev.k === "break") {
+        if (ev.kind === "door") {
+          const entry = world.doorVisuals.get(ev.id);
+          if (entry) {
+            entry.state.broken = true;
+            entry.state.open = true;
+            syncDoorVisual(entry);
+            spawnPoof(entry.group.position.x, entry.group.position.y + 1.2, entry.group.position.z, 0x8b6914, 1.4);
+          }
+        } else if (ev.kind === "prop") {
+          const entry = world.propVisuals.get(ev.id);
+          if (entry) {
+            entry.state.broken = true;
+            syncPropVisual(entry);
+            const p = entry.mesh.position;
+            spawnPoof(p.x, p.y, p.z, 0xa16207, 1);
+          }
+        } else if (ev.kind === "light") {
+          const entry = world.stoplightVisuals.get(ev.id);
+          if (entry && !entry.broken) {
+            entry.state.broken = true;
+            syncStoplightVisual(entry);
+            spawnPoof(entry.group.position.x, entry.group.position.y + 2, entry.group.position.z, 0xef4444, 1.2);
+          }
+        }
       }
     });
+  }
+
+  function nearestDoor(self) {
+    if (!self) return null;
+    let best = null;
+    let bestD = 3.4;
+    world.doorVisuals.forEach((entry) => {
+      if (entry.state.broken) return;
+      const d = Math.hypot(entry.state.x - self.group.position.x, entry.state.z - self.group.position.z);
+      if (d < bestD) {
+        bestD = d;
+        best = entry.state;
+      }
+    });
+    return best;
+  }
+
+  function applyWorldState(msg) {
+    if (msg.doors) {
+      msg.doors.forEach(([id, open, broken]) => {
+        const entry = world.doorVisuals.get(id);
+        if (!entry) return;
+        entry.state.open = Boolean(open);
+        entry.state.broken = Boolean(broken);
+        syncDoorVisual(entry);
+      });
+    }
+    if (msg.propsBroken) {
+      msg.propsBroken.forEach((id) => {
+        const entry = world.propVisuals.get(id);
+        if (!entry) return;
+        entry.state.broken = true;
+        syncPropVisual(entry);
+      });
+    }
+    if (msg.lightsBroken) {
+      msg.lightsBroken.forEach((id) => {
+        const entry = world.stoplightVisuals.get(id);
+        if (!entry) return;
+        entry.state.broken = true;
+        syncStoplightVisual(entry);
+      });
+    }
   }
 
   function handleMessage(msg) {
     if (msg.t === "state") {
       msg.loot.forEach(addLoot);
       msg.chestsOpen.forEach(openChest);
+      applyWorldState(msg);
     } else if (msg.t === "snap") {
       const players = new Map(msg.players.map((row) => [row[0], row]));
       const bbs = new Map(msg.bbs.map((row) => [row[0], row]));
@@ -971,7 +1165,9 @@ function createGame({ root, socket, start }) {
       return;
     }
     if (code === "Enter" || code === "NumpadEnter") {
-      sendMsg({ t: "pickup" });
+      const self = g.players.get(g.myId);
+      if (self && nearestDoor(self)) sendMsg({ t: "door" });
+      else sendMsg({ t: "pickup" });
       event.preventDefault();
       return;
     }
@@ -1240,15 +1436,25 @@ function createGame({ root, socket, start }) {
     hud("hazard").textContent = `${label} in ${formatMs(hazard.nextStepMs)}`;
 
     world.chests.forEach((chest) => {
+      const glow = chest.userData.glow;
+      if (glow && !chest.userData.opened) {
+        const pulse = 0.55 + Math.sin(now / 320 + glow.phase) * 0.45;
+        glow.lid.material.emissive.setHex(0x92400e).multiplyScalar(pulse);
+        glow.body.material.emissive.setHex(0x4338ca).multiplyScalar(0.35 + pulse * 0.35);
+        glow.aura.material.opacity = 0.14 + pulse * 0.12;
+        glow.light.intensity = 0.55 + pulse * 0.75;
+      }
       if (!chest.userData.opened || chest.userData.openT >= 1) return;
       chest.userData.openT = Math.min(1, chest.userData.openT + dt * 2);
       chest.userData.lid.rotation.x = -chest.userData.openT * 1.9;
       chest.userData.lid.position.set(0, 0.72 + chest.userData.openT * 0.15, -chest.userData.openT * 0.3);
       if (chest.userData.openT >= 1) {
+        if (glow) glow.light.intensity = 0;
         chest.children.forEach((mesh) => {
+          if (!mesh.material || !mesh.material.color) return;
           mesh.material = mesh.material.clone();
           mesh.material.color.multiplyScalar(0.55);
-          mesh.material.emissive.setHex(0x000000);
+          if (mesh.material.emissive) mesh.material.emissive.setHex(0x000000);
         });
       }
     });
@@ -1278,9 +1484,23 @@ function createGame({ root, socket, start }) {
         }
       });
     }
+    let doorText = "";
+    if (self) {
+      const door = nearestDoor(self);
+      if (door) doorText = door.open ? "Enter: close door" : "Enter: open door";
+    }
     const prompt = hud("prompt");
-    prompt.textContent = [nearLoot ? `Enter / double-click: pick up ${nearLoot.item}` : "", rideText].filter(Boolean).join(" · ");
-    prompt.classList.toggle("show", Boolean(nearLoot || rideText));
+    prompt.textContent = [doorText, nearLoot ? `Enter / double-click: pick up ${nearLoot.item}` : "", rideText].filter(Boolean).join(" · ");
+    prompt.classList.toggle("show", Boolean(doorText || nearLoot || rideText));
+
+    const lightPhase = Math.floor(now / 2200) % 3;
+    world.stoplightVisuals.forEach((entry) => {
+      if (entry.broken || entry.state.broken) return;
+      entry.bulbs.forEach((bulb, index) => {
+        const on = index === lightPhase;
+        bulb.material.emissive.setHex(on ? (index === 0 ? 0x991111 : index === 1 ? 0x665500 : 0x116611) : 0x000000);
+      });
+    });
 
     if (self) {
       const px = self.group.position.x;

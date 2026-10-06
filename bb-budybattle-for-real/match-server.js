@@ -38,16 +38,52 @@ const LOOT_POOL = [
   ...Object.keys(data.POTION_EFFECTS).map((name) => ({ item: name, weight: 1 / Math.max(10, data.POTION_IN_GAME_PRICE[name]) }))
 ];
 const LOOT_TOTAL = LOOT_POOL.reduce((sum, entry) => sum + entry.weight, 0);
+const RARE_LOOT_POOL = (() => {
+  const seen = new Set();
+  const entries = [];
+  const add = (item, weight) => {
+    if (seen.has(item)) return;
+    seen.add(item);
+    entries.push({ item, weight });
+  };
+  data.WEAPON_SHOP_ITEMS.forEach((name) => {
+    const price = data.getWeaponShopPrice(name);
+    const dmg = data.getWeaponDamage(name);
+    const ranged = data.getWeaponRanged(name);
+    if (price >= 1600 || dmg >= 28 || (ranged && price >= 1200)) {
+      add(name, price / 400 + dmg / 8);
+    }
+  });
+  Object.keys(data.POTION_EFFECTS).forEach((name) => {
+    const price = data.POTION_IN_GAME_PRICE[name] || 0;
+    if (price >= 80) add(name, price / 60);
+  });
+  add("Laser Sword", 12);
+  add("Plasma Blade", 12);
+  add("Energy Pistol", 10);
+  add("Sniper Rifle", 9);
+  add("Assault Rifle", 8);
+  return entries;
+})();
+const RARE_LOOT_TOTAL = RARE_LOOT_POOL.reduce((sum, entry) => sum + entry.weight, 0);
 const BOT_START_WEAPONS = data.WEAPON_SHOP_ITEMS.filter((name) => data.getWeaponShopPrice(name) <= 1500 && data.getWeaponDamage(name) > 0);
 const COMMON_BBS = BB_CATALOG.filter((bb) => bb.rarity === "common" || bb.rarity === "uncommon");
 
-function rollLoot(rand) {
-  let roll = rand() * LOOT_TOTAL;
-  for (const entry of LOOT_POOL) {
+function rollFromPool(rand, pool, total) {
+  let roll = rand() * total;
+  for (const entry of pool) {
     roll -= entry.weight;
     if (roll <= 0) return entry.item;
   }
-  return LOOT_POOL[0].item;
+  return pool[pool.length - 1].item;
+}
+
+function rollLoot(rand) {
+  return rollFromPool(rand, LOOT_POOL, LOOT_TOTAL);
+}
+
+function rollRareLoot(rand) {
+  return rollFromPool(rand, RARE_LOOT_POOL, RARE_LOOT_TOTAL);
 }
 
 function round2(value) {
@@ -83,6 +119,9 @@ class Match {
     this.seed = Math.floor(Math.random() * 2 ** 31);
     this.rand = mapGen.mulberry32(this.seed ^ 0x9e3779b9);
     this.map = mapGen.generateMap(mapId, this.seed);
+    this.doors = this.map.doors.map((d) => ({ ...d }));
+    this.props = this.map.props.map((p) => ({ ...p }));
+    this.stoplights = this.map.stoplights.map((s) => ({ ...s }));
     this.onFinish = onFinish;
     this.awardStars = awardStars;
     this.startAt = Date.now();
@@ -246,10 +285,63 @@ class Match {
       x: mount.x - Math.cos(p.yaw) * (mount.radius + 0.8),
       z: mount.z + Math.sin(p.yaw) * (mount.radius + 0.8)
     };
-    mapGen.resolveCollision(this.map, pos, PLAYER_RADIUS, p.y);
+    mapGen.resolveCollision(this.map, pos, PLAYER_RADIUS, p.y, this.doors);
     p.x = pos.x;
     p.z = pos.z;
     p.vy = 0;
+  }
+
+  nearestDoor(p, range = 3.4) {
+    let best = null;
+    let bestD = range;
+    this.doors.forEach((door) => {
+      if (door.broken) return;
+      const d = Math.hypot(door.x - p.x, door.z - p.z);
+      if (d < bestD) {
+        bestD = d;
+        best = door;
+      }
+    });
+    return best;
+  }
+
+  toggleDoor(p) {
+    const door = this.nearestDoor(p);
+    if (!door) return false;
+    door.open = !door.open;
+    this.events.push({ k: "door", id: door.id, open: door.open });
+    return true;
+  }
+
+  damageWorldProps(p, damage, inFront) {
+    const hit = (tx, tz, range) => inFront(tx, tz, range) && Math.hypot(tx - p.x, tz - p.z) <= range;
+    const range = data.MELEE_RANGE + 0.8;
+    this.doors.forEach((door) => {
+      if (door.broken || !hit(door.x, door.z, range)) return;
+      door.hp -= damage;
+      if (door.hp <= 0) {
+        door.broken = true;
+        door.open = true;
+        this.events.push({ k: "break", kind: "door", id: door.id });
+      }
+    });
+    this.props.forEach((prop) => {
+      if (prop.broken || !hit(prop.x, prop.z, range)) return;
+      if (Math.abs(prop.y - p.y) > 4) return;
+      prop.hp -= damage;
+      if (prop.hp <= 0) {
+        prop.broken = true;
+        this.events.push({ k: "break", kind: "prop", id: prop.id });
+      }
+    });
+    this.stoplights.forEach((light) => {
+      if (light.broken || !hit(light.x, light.z, range + 0.5)) return;
+      light.hp -= damage;
+      if (light.hp <= 0) {
+        light.broken = true;
+        this.events.push({ k: "break", kind: "light", id: light.id });
+      }
+    });
   }
 
   aliveCount() {
@@ -420,6 +512,8 @@ class Match {
     } else if (msg.t === "select") {
       const slot = Math.floor(Number(msg.slot));
       if (slot >= 0 && slot < data.MATCH_INVENTORY_SLOTS) p.held = slot;
+    } else if (msg.t === "door") {
+      this.toggleDoor(p);
     } else if (msg.t === "pickup") {
       this.pickup(p, msg.id ? Number(msg.id) : 0);
     } else if (msg.t === "buy") {
@@ -557,6 +651,7 @@ class Match {
       if (!bb.alive || bb.owner === p.id) return;
       if (inFront(bb.x, bb.z, data.MELEE_RANGE + bb.radius)) this.applyWeaponHit(p, item, damage, null, bb);
     });
+    this.damageWorldProps(p, damage * 0.9, inFront);
   }
 
   applyWeaponHit(p, item, damage, targetPlayer, targetBb) {
@@ -572,9 +667,16 @@ class Match {
 
   openChest(chest) {
     this.chestsOpen.add(chest.id);
-    this.events.push({ k: "chest", id: chest.id });
-    const count = 1 + Math.floor(this.rand() * 3);
-    for (let i = 0; i < count; i += 1) this.dropLoot(chest.x, chest.z, rollLoot(this.rand));
+    const rare = Boolean(chest.rare);
+    this.events.push({ k: "chest", id: chest.id, rare: rare ? 1 : 0 });
+    if (rare) {
+      const count = 3 + Math.floor(this.rand() * 3);
+      for (let i = 0; i < count; i += 1) this.dropLoot(chest.x, chest.z, rollRareLoot(this.rand));
+      if (this.rand() < 0.4) this.dropLoot(chest.x, chest.z, rollRareLoot(this.rand));
+    } else {
+      const count = 1 + Math.floor(this.rand() * 3);
+      for (let i = 0; i < count; i += 1) this.dropLoot(chest.x, chest.z, rollLoot(this.rand));
+    }
   }
 
   movePlayer(p, dt, now) {
@@ -598,7 +700,7 @@ class Match {
     const before = { x: p.x, z: p.z };
     const pos = { x: p.x + mx * PLAYER_SPEED * dt, z: p.z + mz * PLAYER_SPEED * dt };
     const wanted = { x: pos.x, z: pos.z };
-    mapGen.resolveCollision(this.map, pos, PLAYER_RADIUS, p.y);
+    mapGen.resolveCollision(this.map, pos, PLAYER_RADIUS, p.y, this.doors);
     p.touchingWall = Math.hypot(pos.x - wanted.x, pos.z - wanted.z) > 0.001;
     p.x = pos.x;
     p.z = pos.z;
@@ -623,7 +725,7 @@ class Match {
   moveMount(p, mount, mx, mz, dt) {
     const speed = Math.max(mount.speed * 1.25, PLAYER_SPEED);
     const pos = { x: mount.x + mx * speed * dt, z: mount.z + mz * speed * dt };
-    mapGen.resolveCollision(this.map, pos, Math.min(mount.radius, BB_MAX_COLLIDE), mount.y);
+    mapGen.resolveCollision(this.map, pos, Math.min(mount.radius, BB_MAX_COLLIDE), mount.y, this.doors);
     p.moved = Math.hypot(pos.x - mount.x, pos.z - mount.z);
     mount.x = pos.x;
     mount.z = pos.z;
@@ -672,7 +774,7 @@ class Match {
       if (dist > stopAt) {
         const step = Math.min(dist - stopAt, bb.speed * dt);
         const pos = { x: bb.x + (dx / dist) * step, z: bb.z + (dz / dist) * step };
-        mapGen.resolveCollision(this.map, pos, Math.min(bb.radius, BB_MAX_COLLIDE));
+        mapGen.resolveCollision(this.map, pos, Math.min(bb.radius, BB_MAX_COLLIDE), bb.y, this.doors);
         bb.x = pos.x;
         bb.z = pos.z;
       }
@@ -762,7 +864,7 @@ class Match {
       const nx = proj.x + stepX;
       const ny = proj.y + stepY;
       const nz = proj.z + stepZ;
-      if (mapGen.segmentHitsWall(this.map, proj.x, proj.z, nx, nz, ny)) return false;
+      if (mapGen.segmentHitsWall(this.map, proj.x, proj.z, nx, nz, ny, this.doors)) return false;
       if (ny < mapGen.terrainHeight(this.map, nx, nz)) return false;
       for (const target of this.players) {
         if (!target.alive || target.id === proj.owner) continue;
@@ -1032,7 +1134,10 @@ class Match {
   snapshotState() {
     return {
       loot: [...this.loot.values()],
-      chestsOpen: [...this.chestsOpen]
+      chestsOpen: [...this.chestsOpen],
+      doors: this.doors.map((d) => [d.id, d.open ? 1 : 0, d.broken ? 1 : 0]),
+      propsBroken: this.props.filter((p) => p.broken).map((p) => p.id),
+      lightsBroken: this.stoplights.filter((s) => s.broken).map((s) => s.id)
     };
   }
 }
