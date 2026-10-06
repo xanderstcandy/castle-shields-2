@@ -5,6 +5,8 @@ const INTERP_DELAY_MS = 100;
 const INPUT_SEND_MS = 50;
 const BB_KIND_GUARD = 1;
 const BB_KIND_WILD = 2;
+const TUTORIAL_BATTLE_KEY = "bbTutorialBattle";
+const BATTLE_TUTORIAL_MS = 30000;
 const CAMERA_DISTANCE = 10;
 const CAMERA_HEIGHT = 6.5;
 const CAMERA_PAN_SIDE = 4;
@@ -1369,6 +1371,11 @@ function renderHudShell(root) {
     <div class="mh-prompt" data-hud-prompt></div>
     <div class="mh-hotbar" data-hud-hotbar></div>
     <div class="mh-help">WASD / arrows move · mouse aims · click attack · Space jump · 1-8 or wheel switch · Enter door / pick up · Backspace drop · B shop · R ride big B.B.s · Q/E or right-drag turn camera · Z scope</div>
+    <aside class="mh-tutorial" data-hud-tutorial hidden>
+      <p class="mh-tutorial-title">First drop — controls</p>
+      <p class="mh-tutorial-body"><strong>Move</strong> WASD or arrow keys · <strong>Aim</strong> mouse · <strong>Attack</strong> click · <strong>Jump</strong> Space · <strong>Switch gear</strong> 1–8 or scroll wheel · <strong>Doors / pick up</strong> Enter · <strong>Drop item</strong> Backspace · <strong>Shop</strong> B · <strong>Ride big B.B.s</strong> R · <strong>Turn camera</strong> Q/E or right-drag · <strong>Scope</strong> Z</p>
+      <button class="mh-tutorial-btn" type="button" data-action="dismiss-battle-tutorial">Got it!</button>
+    </aside>
     </div>
     <div class="mh-shop" data-hud-shop hidden></div>
   `);
@@ -1415,6 +1422,26 @@ function createGame({ root, socket, start }) {
 
   renderHudShell(root);
   const hud = (key) => root.querySelector(`[data-hud-${key}]`);
+  const tutorialEl = hud("tutorial");
+  let battleTutorialUntil = 0;
+  const dismissBattleTutorial = () => {
+    if (!tutorialEl) return;
+    tutorialEl.hidden = true;
+    battleTutorialUntil = 0;
+    try {
+      localStorage.setItem(TUTORIAL_BATTLE_KEY, "1");
+    } catch {
+      // ignore
+    }
+  };
+  try {
+    if (localStorage.getItem(TUTORIAL_BATTLE_KEY) !== "1" && tutorialEl) {
+      tutorialEl.hidden = false;
+      battleTutorialUntil = performance.now() + BATTLE_TUTORIAL_MS;
+    }
+  } catch {
+    // ignore
+  }
   const defsInner = weaponDefsInner();
   const itemTextures = new Map();
   const itemTexture = (name) => {
@@ -1470,6 +1497,10 @@ function createGame({ root, socket, start }) {
     target.addEventListener(type, handler, opts);
     g.listeners.push(() => target.removeEventListener(type, handler, opts));
   };
+
+  on(root, "click", (event) => {
+    if (event.target.closest("[data-action='dismiss-battle-tutorial']")) dismissBattleTutorial();
+  });
 
   const sendMsg = (payload) => {
     if (g.socket.readyState === WebSocket.OPEN) g.socket.send(JSON.stringify(payload));
@@ -2363,6 +2394,7 @@ function createGame({ root, socket, start }) {
     if (g.disposed) return;
     const dt = Math.min(0.1, (now - last) / 1000);
     last = now;
+    if (battleTutorialUntil && now >= battleTutorialUntil) dismissBattleTutorial();
     updateEntities(now, dt);
     updateWorld(now, dt);
     updateCamera(now, dt);

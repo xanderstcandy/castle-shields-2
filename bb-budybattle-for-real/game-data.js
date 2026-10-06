@@ -390,6 +390,7 @@ const WEAPON_RANGED = {
 };
 
 const WEAPON_PASSIVE = ["Body Armor", "Combat Helmet", "Riot Shield", "Jetpack", "Grappling Hook"];
+const WEAPON_SINGLE_USE = new Set(["Throwing Knife"]);
 
 const MELEE_RANGE = 2.8;
 const MELEE_COOLDOWN_MS = 450;
@@ -508,6 +509,10 @@ function isPotionName(name) {
   return Object.prototype.hasOwnProperty.call(POTION_EFFECTS, name);
 }
 
+function isWeaponSingleUse(name) {
+  return WEAPON_SINGLE_USE.has(name);
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     COINS_PER_DIAMOND,
@@ -546,6 +551,7 @@ if (typeof module !== "undefined") {
     skinCurrency,
     getPlacementReward,
     getWeaponRanged,
-    isPotionName
+    isPotionName,
+    isWeaponSingleUse
   };
 }

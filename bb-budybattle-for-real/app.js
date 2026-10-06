@@ -6,6 +6,8 @@ const AVATAR_YAW_KEY = "bbBuddyYaw";
 const SHOP_WALLET_KEY = "bbShopWallet";
 const SHOP_INVENTORY_KEY = "bbShopInventory";
 const REWARDS_SPIN_KEY = "bbRewardsSpinDaily";
+const TUTORIAL_LOBBY_KEY = "bbTutorialLobby";
+const TUTORIAL_BATTLE_KEY = "bbTutorialBattle";
 const AVATAR_IDS = ["boy-1", "boy-2", "boy-3", "girl-1", "girl-2", "girl-3"];
 const BUDDY_YAW_COUNT = 8;
 const YAW_LABELS = [
@@ -3215,8 +3217,26 @@ function hubPortrait() {
   `;
 }
 
+function lobbyTutorialBubble() {
+  try {
+    if (localStorage.getItem(TUTORIAL_LOBBY_KEY) !== "1") return "";
+  } catch {
+    return "";
+  }
+  return `
+    <aside class="bb-speech bb-speech--hub" role="dialog" aria-label="Hub tutorial">
+      <p class="bb-speech-title">Welcome to the Hub!</p>
+      <p class="bb-speech-body">This is your home base between drops. Tap your buddy portrait for <strong>Gear</strong> (skins and loadout). <strong>All Rewards</strong> spins daily prizes. <strong>Shops</strong> buys coins, weapons, and potions with what you earn. <strong>B.B.s</strong> is your buddy collection. <strong>Battle</strong> queues you into real matches on the island maps.</p>
+      <button class="drop-button bb-speech-btn" type="button" data-action="dismiss-lobby-tutorial">
+        <span class="button-text">Got it!</span>
+      </button>
+    </aside>
+  `;
+}
+
 function renderLobby() {
   renderScene(hubPortrait() + renderCard(`
+    ${lobbyTutorialBubble()}
     <header class="drop-head hub-head">
       <div class="drop-crest">${crestSvg()}</div>
       <p class="drop-kicker">B.B <span>Hub</span></p>
@@ -3311,6 +3331,13 @@ async function submitAuth(form) {
   try {
     const account = await postAuth(creating ? "/api/create-account" : "/api/sign-in", username, password);
     writeLastCallsign(account.username);
+    if (creating) {
+      try {
+        localStorage.setItem(TUTORIAL_LOBBY_KEY, "1");
+      } catch {
+        // ignore
+      }
+    }
     state.password = password;
     applyAccountToState(account);
     state.leaderboard = null;
@@ -3339,6 +3366,16 @@ app.addEventListener("click", (event) => {
     input.type = revealing ? "text" : "password";
     actionTarget.classList.toggle("revealed", revealing);
     actionTarget.setAttribute("aria-label", revealing ? "Hide passcode" : "Show passcode");
+    return;
+  }
+
+  if (action === "dismiss-lobby-tutorial") {
+    try {
+      localStorage.removeItem(TUTORIAL_LOBBY_KEY);
+    } catch {
+      // ignore
+    }
+    render();
     return;
   }
 

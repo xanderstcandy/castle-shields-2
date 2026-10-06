@@ -711,6 +711,7 @@ class Match {
         vz: Math.cos(yaw) * Math.cos(pitch) * speed,
         left: ranged.range
       });
+      if (data.isWeaponSingleUse(item)) p.inv[p.held] = null;
       return;
     }
     const inFront = (tx, tz, range) => {
