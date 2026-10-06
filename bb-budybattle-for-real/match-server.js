@@ -68,6 +68,15 @@ const RARE_LOOT_POOL = (() => {
 const RARE_LOOT_TOTAL = RARE_LOOT_POOL.reduce((sum, entry) => sum + entry.weight, 0);
 const BOT_START_WEAPONS = data.WEAPON_SHOP_ITEMS.filter((name) => data.getWeaponShopPrice(name) <= 1500 && data.getWeaponDamage(name) > 0);
 const COMMON_BBS = BB_CATALOG.filter((bb) => bb.rarity === "common" || bb.rarity === "uncommon");
+const GUARD_BBS = BB_CATALOG.filter((bb) => bb.rarity === "rare");
+const WILD_COUNT = 14;
+const GUARD_AGGRO = 9;
+const GUARD_LEASH = 18;
+const GUARD_HP_SCALE = 1.25;
+const GUARD_DAMAGE_SCALE = 0.4;
+const WILD_ROAM = 10;
+const WILD_LEASH = 35;
+const BB_KIND_CODE = { pet: 0, guard: 1, wild: 2 };
 
 function rollFromPool(rand, pool, total) {
   let roll = rand() * total;
@@ -138,6 +147,7 @@ class Match {
     this.placesTaken = 0;
 
     humans.forEach((conn) => this.addPlayer(conn.username, conn.avatar, conn.loadout, conn.ws));
+    this.spawnWildlife();
     let botIndex = 0;
     const usedNames = new Set(this.players.map((p) => p.name));
     while (this.players.length < data.MATCH_PLAYERS) {
@@ -217,23 +227,31 @@ class Match {
   spawnBb(owner, name) {
     const def = BB_CATALOG.find((bb) => bb.name === name);
     if (!def) return null;
-    const height = def.size * BB_CHARACTER_HEIGHT;
+    return this.createBb(def, "pet", owner.id, owner.x + (this.rand() - 0.5) * 3, owner.z + (this.rand() - 0.5) * 3, owner.y);
+  }
+
+  createBb(def, kind, ownerId, x, z, y) {
+    const hpScale = kind === "guard" ? GUARD_HP_SCALE : 1;
     const bb = {
       id: this.nextId++,
-      owner: owner.id,
+      owner: ownerId,
+      kind,
       catalogIndex: BB_CATALOG.indexOf(def),
       name: def.name,
-      hp: def.hp,
-      maxHp: def.hp,
-      damage: def.damage,
+      hp: def.hp * hpScale,
+      maxHp: Math.round(def.hp * hpScale),
+      damage: def.damage * (kind === "guard" ? GUARD_DAMAGE_SCALE : 1),
       attackMs: def.attackMs || 1000,
       defense: def.defense || 0,
       speed: BB_SPEED_UNITS[def.speed] || BB_DEFAULT_SPEED,
-      x: owner.x + (this.rand() - 0.5) * 3,
-      z: owner.z + (this.rand() - 0.5) * 3,
-      y: owner.y,
-      yaw: 0,
-      height,
+      x,
+      z,
+      y,
+      home: { x, z, y },
+      roamGoal: null,
+      aggro: 0,
+      yaw: this.rand() * Math.PI * 2,
+      height: def.size * BB_CHARACTER_HEIGHT,
       radius: bbFootRadius(def),
       rideable: bbIsRideable(def),
       rider: 0,
@@ -241,6 +259,31 @@ class Match {
     };
     this.bbs.push(bb);
     return bb;
+  }
+
+  spawnWildlife() {
+    this.map.chests.forEach((chest) => {
+      if (!chest.rare) return;
+      const def = GUARD_BBS[Math.floor(this.rand() * GUARD_BBS.length)];
+      const angle = this.rand() * Math.PI * 2;
+      const pos = { x: chest.x + Math.cos(angle) * 2.2, z: chest.z + Math.sin(angle) * 2.2 };
+      if (mapGen.segmentHitsWall(this.map, chest.x, chest.z, pos.x, pos.z, chest.y + 1, this.doors)) {
+        pos.x = chest.x;
+        pos.z = chest.z;
+      }
+      const bb = this.createBb(def, "guard", 0, pos.x, pos.z, mapGen.groundHeight(this.map, pos.x, pos.z, chest.y));
+      bb.home = { x: chest.x, z: chest.z, y: chest.y };
+    });
+    for (let i = 0; i < WILD_COUNT; i += 1) {
+      const def = COMMON_BBS[Math.floor(this.rand() * COMMON_BBS.length)];
+      const spot = mapGen.randomLandSpot(this.map, this.rand);
+      this.createBb(def, "wild", 0, spot.x, spot.z, mapGen.terrainHeight(this.map, spot.x, spot.z));
+    }
+  }
+
+  bbHostileTo(bb, playerId) {
+    if (bb.kind === "pet") return bb.owner !== playerId;
+    return bb.aggro === playerId;
   }
 
   playerById(id) {
@@ -385,12 +428,45 @@ class Match {
     const dealt = Math.max(amount * 0.15, amount - (opts.ignoreDefense ? 0 : bb.defense));
     bb.hp -= dealt;
     this.events.push({ k: "hit", id: bb.id });
+    if (sourcePlayer && bb.kind !== "pet") bb.aggro = sourcePlayer.id;
     if (bb.hp <= 0) {
+      if (bb.kind === "wild" && sourcePlayer && sourcePlayer.alive && this.tame(bb, sourcePlayer)) return;
       bb.alive = false;
       this.events.push({ k: "bbdown", id: bb.id });
       const rider = bb.rider ? this.playerById(bb.rider) : null;
       if (rider) this.dismount(rider, bb);
     }
+  }
+
+  tame(bb, player) {
+    const mine = this.bbs.filter((other) => other.alive && other.owner === player.id).length;
+    if (mine >= data.MATCH_MAX_BBS) {
+      if (player.ws) send(player.ws, { t: "notice", text: `Squad full (${data.MATCH_MAX_BBS} B.B.s) — ${bb.name} ran off` });
+      return false;
+    }
+    bb.kind = "pet";
+    bb.owner = player.id;
+    bb.aggro = 0;
+    bb.hp = bb.maxHp;
+    this.events.push({ k: "tamed", id: bb.id, by: player.id });
+    if (player.ws) send(player.ws, { t: "notice", text: `You tamed ${bb.name}! It fights for you this game.` });
+    return true;
+  }
+
+  dropHeld(p) {
+    const item = p.inv[p.held];
+    if (!item) return;
+    p.inv[p.held] = null;
+    const id = this.nextId++;
+    let lx = p.x + Math.sin(p.yaw) * 1.4;
+    let lz = p.z + Math.cos(p.yaw) * 1.4;
+    if (mapGen.segmentHitsWall(this.map, p.x, p.z, lx, lz, p.y + 1, this.doors)) {
+      lx = p.x;
+      lz = p.z;
+    }
+    const entry = { id, x: round2(lx), z: round2(lz), y: round2(mapGen.groundHeight(this.map, lx, lz, p.y + 0.5)), item };
+    this.loot.set(id, entry);
+    this.events.push({ k: "loot+", ...entry });
   }
 
   dropLoot(x, z, item, y) {
@@ -524,6 +600,8 @@ class Match {
       this.buy(p, String(msg.kind || ""), String(msg.name || ""));
     } else if (msg.t === "ride") {
       this.toggleRide(p);
+    } else if (msg.t === "drop") {
+      this.dropHeld(p);
     }
   }
 
@@ -751,7 +829,68 @@ class Match {
     p.touchingWall = false;
   }
 
+  stepBbToward(bb, gx, gz, stopAt, speed, dt) {
+    const dx = gx - bb.x;
+    const dz = gz - bb.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist > stopAt) {
+      const step = Math.min(dist - stopAt, speed * dt);
+      const pos = { x: bb.x + (dx / dist) * step, z: bb.z + (dz / dist) * step };
+      mapGen.resolveCollision(this.map, pos, Math.min(bb.radius, BB_MAX_COLLIDE), bb.y, this.doors);
+      bb.x = pos.x;
+      bb.z = pos.z;
+      bb.yaw = Math.atan2(dx, dz);
+    }
+    bb.y = mapGen.groundHeight(this.map, bb.x, bb.z, bb.y);
+    return dist;
+  }
+
+  moveWildBb(bb, dt) {
+    const now = this.elapsed();
+    const home = bb.home;
+    let target = bb.aggro ? this.playerById(bb.aggro) : null;
+    const leash = bb.kind === "guard" ? GUARD_LEASH : WILD_LEASH;
+    if (target && (!target.alive || Math.hypot(target.x - home.x, target.z - home.z) > leash)) target = null;
+    if (!target && bb.kind === "guard" && now >= SPAWN_PROTECT_MS) {
+      let best = GUARD_AGGRO;
+      this.players.forEach((p) => {
+        if (!p.alive || Math.abs(p.y - home.y) > 3) return;
+        const d = Math.hypot(p.x - home.x, p.z - home.z);
+        if (d < best) {
+          best = d;
+          target = p;
+        }
+      });
+    }
+    bb.aggro = target ? target.id : 0;
+    if (target) {
+      const stopAt = 1 + bb.radius;
+      const dist = this.stepBbToward(bb, target.x, target.z, stopAt, bb.speed, dt);
+      bb.yaw = Math.atan2(target.x - bb.x, target.z - bb.z);
+      if (dist <= stopAt + 0.6 && Math.abs(target.y - bb.y) < 2.5) {
+        this.damagePlayer(target, bb.damage * (dt * 1000 / bb.attackMs), null, { cause: bb.name });
+      }
+      return;
+    }
+    if (bb.kind === "guard") {
+      this.stepBbToward(bb, home.x, home.z, 1.5 + bb.radius, bb.speed, dt);
+      if (bb.hp < bb.maxHp) bb.hp = Math.min(bb.maxHp, bb.hp + bb.maxHp * 0.05 * dt);
+      return;
+    }
+    if (!bb.roamGoal || this.rand() < 0.004) {
+      const a = this.rand() * Math.PI * 2;
+      const r = this.rand() * WILD_ROAM;
+      bb.roamGoal = { x: home.x + Math.cos(a) * r, z: home.z + Math.sin(a) * r, waitUntil: now + 1500 + this.rand() * 3000 };
+    }
+    if (now < bb.roamGoal.waitUntil) return;
+    if (this.stepBbToward(bb, bb.roamGoal.x, bb.roamGoal.z, 0.5, bb.speed * 0.4, dt) <= 0.6) bb.roamGoal = null;
+  }
+
   moveBb(bb, dt) {
+    if (bb.kind !== "pet") {
+      this.moveWildBb(bb, dt);
+      return;
+    }
     const owner = this.playerById(bb.owner);
     if (!owner || !owner.alive) return;
     let target = null;
@@ -765,7 +904,7 @@ class Match {
       }
     });
     this.bbs.forEach((other) => {
-      if (!other.alive || other.owner === bb.owner) return;
+      if (!other.alive || other.owner === bb.owner || !this.bbHostileTo(other, bb.owner)) return;
       const d = Math.hypot(other.x - bb.x, other.z - bb.z);
       if (d < best) {
         best = d;
@@ -1111,7 +1250,7 @@ class Match {
       p.id, round2(p.x), round2(p.y), round2(p.z), round2(p.yaw), Math.ceil(p.hp), p.maxHp,
       this.heldItem(p) || "", now < p.stunUntil ? 1 : 0, now < p.swingUntil ? 1 : 0, p.riding || 0
     ]);
-    const bbs = this.bbs.map((bb) => [bb.id, bb.owner, bb.catalogIndex, round2(bb.x), round2(bb.y), round2(bb.z), Math.ceil(bb.hp), bb.maxHp, bb.rider || 0, round2(bb.yaw)]);
+    const bbs = this.bbs.map((bb) => [bb.id, bb.owner, bb.catalogIndex, round2(bb.x), round2(bb.y), round2(bb.z), Math.ceil(bb.hp), bb.maxHp, bb.rider || 0, round2(bb.yaw), BB_KIND_CODE[bb.kind]]);
     const proj = this.projectiles.map((pr) => [pr.id, round2(pr.x), round2(pr.y), round2(pr.z)]);
     const rocks = this.rocks.map((rock) => [rock.id, rock.x, rock.z, rock.hitAt - now]);
     const events = this.events;

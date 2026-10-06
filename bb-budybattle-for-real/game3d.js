@@ -3,6 +3,8 @@ import { buildBbModel } from "./bb-models.js";
 
 const INTERP_DELAY_MS = 100;
 const INPUT_SEND_MS = 50;
+const BB_KIND_GUARD = 1;
+const BB_KIND_WILD = 2;
 const CAMERA_DISTANCE = 10;
 const CAMERA_HEIGHT = 6.5;
 const CAMERA_PAN_SIDE = 4;
@@ -1366,7 +1368,7 @@ function renderHudShell(root) {
     <div class="mh-toast" data-hud-toast></div>
     <div class="mh-prompt" data-hud-prompt></div>
     <div class="mh-hotbar" data-hud-hotbar></div>
-    <div class="mh-help">WASD / arrows move · mouse aims · click attack · Space jump · 1-8 or wheel switch · Enter door / pick up · B shop · R ride big B.B.s · Q/E or right-drag turn camera · Z scope</div>
+    <div class="mh-help">WASD / arrows move · mouse aims · click attack · Space jump · 1-8 or wheel switch · Enter door / pick up · Backspace drop · B shop · R ride big B.B.s · Q/E or right-drag turn camera · Z scope</div>
     </div>
     <div class="mh-shop" data-hud-shop hidden></div>
   `);
@@ -1559,25 +1561,48 @@ function createGame({ root, socket, start }) {
     return entry;
   }
 
-  function ensureBb(id, catalogIndex, owner) {
-    if (g.bbs.has(id)) return g.bbs.get(id);
-    const def = BB_CATALOG[catalogIndex];
-    const model = buildBbModel(bbModelSpec(def), def.size * BB_CHARACTER_HEIGHT);
-    const group = new THREE.Group();
-    group.add(model.group);
-    if (owner === g.myId) {
-      const inner = model.radius * 0.95 + 0.1;
-      const ring = new THREE.Mesh(
-        new THREE.RingGeometry(inner, inner + 0.12 + model.radius * 0.08, 28),
-        new THREE.MeshBasicMaterial({ color: bbIsRideable(def) ? 0xfacc15 : 0x4ade80, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false })
-      );
-      ring.rotation.x = -Math.PI / 2;
-      ring.position.y = 0.06;
-      group.add(ring);
+  function bbRingColor(def, owner, kind) {
+    if (kind === BB_KIND_GUARD) return 0xef4444;
+    if (kind === BB_KIND_WILD) return 0xe2e8f0;
+    if (owner === g.myId) return bbIsRideable(def) ? 0xfacc15 : 0x4ade80;
+    return null;
+  }
+
+  function syncBbRing(entry, owner, kind) {
+    if (entry.owner === owner && entry.kind === kind) return;
+    entry.owner = owner;
+    entry.kind = kind;
+    if (entry.ring) {
+      entry.group.remove(entry.ring);
+      entry.ring.geometry.dispose();
+      entry.ring.material.dispose();
+      entry.ring = null;
     }
-    scene.add(group);
-    const entry = { group, model, def, owner, flashUntil: 0, flashing: false, walk: 0, lastPos: new THREE.Vector3() };
-    g.bbs.set(id, entry);
+    const color = bbRingColor(entry.def, owner, kind);
+    if (color === null) return;
+    const inner = entry.model.radius * 0.95 + 0.1;
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(inner, inner + 0.12 + entry.model.radius * 0.08, 28),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: kind === BB_KIND_WILD ? 0.45 : 0.8, side: THREE.DoubleSide, depthWrite: false })
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.06;
+    entry.group.add(ring);
+    entry.ring = ring;
+  }
+
+  function ensureBb(id, catalogIndex, owner, kind) {
+    let entry = g.bbs.get(id);
+    if (!entry) {
+      const def = BB_CATALOG[catalogIndex];
+      const model = buildBbModel(bbModelSpec(def), def.size * BB_CHARACTER_HEIGHT);
+      const group = new THREE.Group();
+      group.add(model.group);
+      scene.add(group);
+      entry = { group, model, def, owner: undefined, kind: undefined, ring: null, flashUntil: 0, flashing: false, walk: 0, lastPos: new THREE.Vector3() };
+      g.bbs.set(id, entry);
+    }
+    syncBbRing(entry, owner, kind || 0);
     return entry;
   }
 
@@ -1604,6 +1629,10 @@ function createGame({ root, socket, start }) {
       } else if (ev.k === "bbdown") {
         const bb = g.bbs.get(ev.id);
         if (bb) spawnPoof(bb.group.position.x, bb.group.position.y + bb.model.height * 0.5, bb.group.position.z, 0xfca5a5, 1.2 + bb.model.height * 0.4);
+      } else if (ev.k === "tamed") {
+        const bb = g.bbs.get(ev.id);
+        if (bb) spawnPoof(bb.group.position.x, bb.group.position.y + bb.model.height * 0.5, bb.group.position.z, 0x4ade80, 1.2 + bb.model.height * 0.4);
+        addFeed(`${nameOf(ev.by)} tamed a wild B.B.`);
       } else if (ev.k === "drink" && ev.id === g.myId) {
         toast(`Drank ${ev.item}`);
       } else if (ev.k === "door") {
@@ -1848,6 +1877,11 @@ function createGame({ root, socket, start }) {
       event.preventDefault();
       return;
     }
+    if (code === "Backspace") {
+      sendMsg({ t: "drop" });
+      event.preventDefault();
+      return;
+    }
     if (/^Digit[1-8]$/.test(code)) {
       selectSlot(Number(code.slice(5)) - 1);
       return;
@@ -2014,7 +2048,7 @@ function createGame({ root, socket, start }) {
       }
     });
     latest.bbs.forEach((row, id) => {
-      const entry = ensureBb(id, row[2], row[1]);
+      const entry = ensureBb(id, row[2], row[1], row[10]);
       const a = older.bbs.get(id) || row;
       const b = newer.bbs.get(id) || row;
       const ridden = Boolean(row[8]);
