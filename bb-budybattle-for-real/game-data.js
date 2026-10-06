@@ -151,7 +151,7 @@ const WEAPON_DAMAGE = {
   "Golf Club": 13, "Hockey Stick": 11, "Cricket Bat": 13, "Tennis Racket": 6, "Frying Pan": 12,
   "Cast Iron Skillet": 16, "Hot Sauce Bottle": 2, "Salt Shaker": 1, "Pepper Mill": 4, "Fish Slice": 3,
   "Spatula": 3, "Pizza Cutter": 6, "Chopsticks": 2, "Sushi Knife": 16, "Butcher Saw": 18,
-  "Bone Saw": 18, "Laser Sword": 40, "Plasma Blade": 42, "Rubber Chicken": 1
+  "Bone Saw": 18, "Laser Sword": 40, "Plasma Blade": 42, "Rubber Chicken": 15
 };
 
 const WEAPON_DEFENSE = {
