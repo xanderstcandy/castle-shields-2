@@ -7,6 +7,8 @@ const BB_KIND_GUARD = 1;
 const BB_KIND_WILD = 2;
 const TUTORIAL_BATTLE_KEY = "bbTutorialBattle";
 const BATTLE_TUTORIAL_MS = 30000;
+const MOVEMENT_KEY_CODES = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]);
+const KEY_CAPTURE = { capture: true };
 const CAMERA_DISTANCE = 10;
 const CAMERA_HEIGHT = 6.5;
 const CAMERA_PAN_SIDE = 4;
@@ -1391,7 +1393,12 @@ function createGame({ root, socket, start }) {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.domElement.className = "match-canvas";
+  renderer.domElement.tabIndex = 0;
+  renderer.domElement.setAttribute("role", "application");
+  renderer.domElement.setAttribute("aria-label", "Match view");
+  renderer.domElement.style.outline = "none";
   root.appendChild(renderer.domElement);
+  const canvas = renderer.domElement;
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(palette.sky);
@@ -1490,7 +1497,13 @@ function createGame({ root, socket, start }) {
     lastInputAt: 0,
     lastClickAt: 0,
     listeners: [],
-    disposed: false
+    disposed: false,
+    socketLive: true,
+    pageHidden: false,
+    stuckMs: 0,
+    stuckPos: new THREE.Vector3(),
+    toastTimer: 0,
+    unbindSocket: null
   };
 
   const on = (target, type, handler, opts) => {
@@ -1502,16 +1515,49 @@ function createGame({ root, socket, start }) {
     if (event.target.closest("[data-action='dismiss-battle-tutorial']")) dismissBattleTutorial();
   });
 
+  function bindSocket(socket) {
+    if (g.unbindSocket) g.unbindSocket();
+    g.socket = socket;
+    const sync = () => {
+      g.socketLive = socket.readyState === WebSocket.OPEN;
+    };
+    const onClose = () => {
+      sync();
+      toast("Connection lost — reconnecting…", 4000);
+    };
+    const onOpen = () => {
+      sync();
+      toast("Back in the match", 1600);
+    };
+    socket.addEventListener("close", onClose);
+    socket.addEventListener("open", onOpen);
+    sync();
+    g.unbindSocket = () => {
+      socket.removeEventListener("close", onClose);
+      socket.removeEventListener("open", onOpen);
+    };
+    g.listeners.push(() => {
+      if (g.unbindSocket) g.unbindSocket();
+    });
+  }
+  bindSocket(socket);
+  g.bindSocket = bindSocket;
+
   const sendMsg = (payload) => {
-    if (g.socket.readyState === WebSocket.OPEN) g.socket.send(JSON.stringify(payload));
+    if (!g.socket || g.socket.readyState !== WebSocket.OPEN) return;
+    g.socket.send(JSON.stringify(payload));
   };
 
-  function toast(text) {
+  function toast(text, ms = 1800) {
     const el = hud("toast");
     el.textContent = text;
     el.classList.add("show");
     clearTimeout(g.toastTimer);
-    g.toastTimer = setTimeout(() => el.classList.remove("show"), 1800);
+    g.toastTimer = setTimeout(() => el.classList.remove("show"), ms);
+  }
+
+  function focusMatchView() {
+    canvas.focus({ preventScroll: true });
   }
 
   function addFeed(text) {
@@ -1891,7 +1937,7 @@ function createGame({ root, socket, start }) {
   }
 
   on(window, "keydown", (event) => {
-    if (event.repeat && !["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.code)) return;
+    if (event.repeat && !MOVEMENT_KEY_CODES.has(event.code)) return;
     const code = event.code;
     if (code === "KeyB") {
       toggleShop();
@@ -1924,14 +1970,29 @@ function createGame({ root, socket, start }) {
     if (code === "KeyZ") g.scope = !g.scope;
     if (["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(code)) event.preventDefault();
     g.keys.add(code);
+  }, KEY_CAPTURE);
+  on(window, "keyup", (event) => g.keys.delete(event.code), KEY_CAPTURE);
+  on(document, "visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      g.pageHidden = true;
+      g.keys.clear();
+      g.attackHeld = false;
+      g.rightDrag = null;
+      return;
+    }
+    if (g.pageHidden) {
+      g.pageHidden = false;
+      g.attackHeld = false;
+      g.rightDrag = null;
+      toast("Tap a movement key (WASD) if you can't move", 3200);
+      focusMatchView();
+    }
   });
-  on(window, "keyup", (event) => g.keys.delete(event.code));
   on(window, "blur", () => {
-    g.keys.clear();
     g.attackHeld = false;
+    g.rightDrag = null;
   });
 
-  const canvas = renderer.domElement;
   on(canvas, "contextmenu", (event) => event.preventDefault());
   on(canvas, "mousemove", (event) => {
     const rect = canvas.getBoundingClientRect();
@@ -1943,6 +2004,7 @@ function createGame({ root, socket, start }) {
   });
   on(canvas, "mouseleave", () => g.mouse.set(0, 0));
   on(canvas, "mousedown", (event) => {
+    focusMatchView();
     if (event.button === 2) {
       g.rightDrag = event.clientX;
       return;
@@ -1950,9 +2012,15 @@ function createGame({ root, socket, start }) {
     if (event.button !== 0 || g.shopOpen) return;
     g.attackHeld = true;
   });
-  on(window, "mouseup", (event) => {
+  const releasePointer = (event) => {
     if (event.button === 2) g.rightDrag = null;
     if (event.button === 0) g.attackHeld = false;
+  };
+  on(window, "mouseup", releasePointer);
+  on(window, "pointerup", releasePointer);
+  on(window, "pointercancel", () => {
+    g.rightDrag = null;
+    g.attackHeld = false;
   });
   on(canvas, "dblclick", () => {
     if (tryDoubleClickPickup()) g.attackHeld = false;
@@ -2260,6 +2328,22 @@ function createGame({ root, socket, start }) {
       const px = self.group.position.x;
       const py = self.group.position.y;
       const pz = self.group.position.z;
+      const moveIntent = [...MOVEMENT_KEY_CODES].some((code) => g.keys.has(code));
+      const stunned = g.me && g.me.stunMs > 0;
+      const moved = Math.hypot(px - g.stuckPos.x, pz - g.stuckPos.z);
+      if (moveIntent && !stunned && g.socketLive && moved > 0.08) {
+        g.stuckMs = 0;
+        g.stuckPos.set(px, py, pz);
+      } else if (moveIntent && !stunned && g.socketLive) {
+        g.stuckMs += dt * 1000;
+      } else {
+        g.stuckMs = 0;
+        g.stuckPos.set(px, py, pz);
+      }
+      if (g.stuckMs > 1400 && moveIntent) {
+        toast("Stuck? Release WASD and press again, or jump sideways", 2600);
+        g.stuckMs = 0;
+      }
       const cuts = new Map();
       map.buildings.forEach((b) => {
         const gapX = Math.abs(px - b.x) - b.w / 2;
@@ -2364,6 +2448,7 @@ function createGame({ root, socket, start }) {
   }
 
   function sendInput(now) {
+    if (!g.socketLive) return;
     if (now - g.lastInputAt < INPUT_SEND_MS) return;
     g.lastInputAt = now;
     const k = g.keys;
@@ -2404,6 +2489,7 @@ function createGame({ root, socket, start }) {
   }
 
   hud("map").textContent = BBMapGen.MAP_LABELS[map.id];
+  focusMatchView();
   g.raf = requestAnimationFrame(frame);
 
   g.handleMessage = handleMessage;
@@ -2431,7 +2517,7 @@ window.BBGame = {
     game = createGame(opts);
   },
   setSocket(socket) {
-    if (game) game.socket = socket;
+    if (game && socket) game.bindSocket(socket);
   },
   handleMessage(msg) {
     if (game) game.handleMessage(msg);
