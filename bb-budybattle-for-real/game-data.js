@@ -123,7 +123,7 @@ const WEAPON_SHOP_ITEMS = [
 const WEAPON_SHOP_PRICE_OVERRIDE = {
   "Laser Sword": 2500,
   "Plasma Blade": 2750,
-  "Energy Pistol": 2250,
+  "Energy Pistol": 9000,
   "Walking Stick": 2850,
   "Rubber Chicken": 3000
 };
@@ -144,7 +144,7 @@ const WEAPON_DAMAGE = {
   "Baseball Bat": 14, "Nail Bat": 18, "Bo Staff": 9, "Nunchaku": 10, "Sai": 12,
   "Shuriken": 6, "Throwing Knife": 10, "Crossbow": 35, "Longbow": 30, "Slingshot": 4,
   "Blowdart": 4, "Pistol": 20, "Revolver": 28, "SMG": 14, "Shotgun": 45,
-  "Assault Rifle": 25, "Sniper Rifle": 80, "Automatic Rifle": 22, "Energy Pistol": 24, "BB Gun": 3,
+  "Assault Rifle": 25, "Sniper Rifle": 80, "Automatic Rifle": 22, "Energy Pistol": 40, "BB Gun": 15,
   "Jetpack": 0, "Body Armor": 0, "Combat Helmet": 0, "Riot Shield": 5, "Grappling Hook": 3,
   "Stun Baton": 6, "Chainsaw": 40, "Fire Axe": 24, "Pickaxe": 18, "Shovel": 12,
   "Garden Hoe": 10, "Rake": 7, "Broom": 4, "Umbrella": 5, "Walking Stick": 7,
@@ -258,7 +258,7 @@ const WEAPON_UNIT_PRICE = {
   "Slingshot": 8,
   "Blowdart": 12,
   "Pistol": 60,
-  "BB Gun": 30,
+  "BB Gun": 180,
   "Revolver": 75,
   "SMG": 130,
   "Shotgun": 110,
