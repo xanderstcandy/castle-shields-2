@@ -1371,7 +1371,7 @@ function renderHudShell(root) {
     <div class="mh-toast" data-hud-toast></div>
     <div class="mh-prompt" data-hud-prompt></div>
     <div class="mh-hotbar" data-hud-hotbar></div>
-    <div class="mh-help">WASD / arrows move · mouse aims · click attack · Space jump · 1-8 or wheel switch · Enter door / pick up · Backspace drop · B shop · R ride big B.B.s · Q/E or right-drag turn camera · Z scope</div>
+    <div class="mh-help">WASD / arrows move · mouse aims · click attack · Space jump · 1-8 or wheel switch · Enter door / pick up · Backspace drop · Q shop · R ride big B.B.s · right-drag turn camera · Z scope</div>
     </div>
     <div class="mh-shop" data-hud-shop hidden></div>
   `);
@@ -1428,7 +1428,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
   tutorialEl.hidden = true;
   tutorialEl.innerHTML = `
     <p class="mh-tutorial-title">First drop — controls</p>
-    <p class="mh-tutorial-body"><strong>Move</strong> WASD or arrow keys · <strong>Aim</strong> mouse · <strong>Attack</strong> click · <strong>Jump</strong> Space · <strong>Switch gear</strong> 1–8 or scroll wheel · <strong>Doors / pick up</strong> Enter · <strong>Drop item</strong> Backspace · <strong>Shop</strong> B · <strong>Ride big B.B.s</strong> R · <strong>Turn camera</strong> Q/E or right-drag · <strong>Scope</strong> Z</p>
+    <p class="mh-tutorial-body"><strong>Move</strong> WASD or arrow keys · <strong>Aim</strong> mouse · <strong>Attack</strong> click · <strong>Jump</strong> Space · <strong>Switch gear</strong> 1–8 or scroll wheel · <strong>Doors / pick up</strong> Enter · <strong>Drop item</strong> Backspace · <strong>Shop</strong> Q · <strong>Ride big B.B.s</strong> R · <strong>Turn camera</strong> right-drag · <strong>Scope</strong> Z</p>
     <button class="mh-tutorial-btn" type="button" data-action="dismiss-battle-tutorial">Got it!</button>
   `;
   root.appendChild(tutorialEl);
@@ -1873,7 +1873,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
         <header class="mh-shop-head">
           <h2>In-Game Shop</h2>
           <span class="mh-shop-coins">${shopCoinSvg()} <span data-hud-shop-coins>${g.me ? g.me.coins : 0}</span></span>
-          <button type="button" class="mh-shop-close" data-hud-shop-close>Close (B)</button>
+          <button type="button" class="mh-shop-close" data-hud-shop-close>Close (Q)</button>
         </header>
         <nav class="mh-shop-tabs">${tabs.map(([id, label]) => `<button type="button" class="mh-shop-tab${g.shopTab === id ? " active" : ""}" data-hud-shop-tab="${id}">${label}</button>`).join("")}</nav>
         <div class="mh-shop-grid">
@@ -1941,10 +1941,11 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
   on(window, "keydown", (event) => {
     if (event.repeat && !MOVEMENT_KEY_CODES.has(event.code)) return;
     const code = event.code;
-    if (code === "KeyB") {
+    if (code === "KeyQ") {
       toggleShop();
       return;
     }
+    if (code === "KeyB" || code === "KeyE") return;
     if (code === "Escape" && g.shopOpen) {
       toggleShop(false);
       return;
@@ -2393,8 +2394,6 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
   function updateCamera(now, dt) {
     const self = g.players.get(g.myId);
     if (!self) return;
-    if (g.keys.has("KeyQ")) g.camYaw += dt * 2.2;
-    if (g.keys.has("KeyE")) g.camYaw -= dt * 2.2;
     const turnAmount = Math.abs(g.mouse.x) - MOUSE_TURN_DEADZONE;
     if (turnAmount > 0 && !g.shopOpen && !g.rightDrag) {
       g.camYaw -= Math.sign(g.mouse.x) * (turnAmount / (1 - MOUSE_TURN_DEADZONE)) * MOUSE_TURN_SPEED * dt;
