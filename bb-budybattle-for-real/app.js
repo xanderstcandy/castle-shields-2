@@ -947,7 +947,9 @@ function modeButton(label, variant) {
     ? ` data-action="open-ranked"`
     : variant === "competitive"
       ? ` data-action="open-competitive-play"`
-      : "";
+      : variant === "fun"
+        ? ` data-action="start-for-fun"`
+        : "";
   return `
     <button class="drop-button hub-button mode-button mode-${variant}" type="button"${action}>
       <span class="hub-icon">${modeIcons[variant]}</span>
@@ -1944,7 +1946,7 @@ function handleMatchMessage(msg) {
       window.BBGame.setSocket(matchSocket);
       return;
     }
-    consumeOneGameLoadout();
+    if (msg.mode !== "fun") consumeOneGameLoadout();
     state.screen = "match";
     render();
     try {
@@ -1997,14 +1999,23 @@ function placeSuffix(place) {
   return { 1: "st", 2: "nd", 3: "rd" }[place % 10] || "th";
 }
 
+function queueModeLabel(mode) {
+  if (mode === "ranked") return "Ranked";
+  if (mode === "fun") return "For Fun";
+  return "Competitive";
+}
+
 function renderQueue() {
   const queue = state.matchQueue;
+  const tagline = queue.mode === "fun"
+    ? `Extra easy island <span class="tagline-mode">(no rewards)</span>`
+    : `Drop queue <span class="tagline-mode">(for real)</span>`;
   renderScene(renderCard(`
     <header class="drop-head hub-head">
       <div class="drop-crest">${crestSvg()}</div>
-      <p class="drop-kicker">B.B <span>${queue.mode === "ranked" ? "Ranked" : "Competitive"}</span></p>
+      <p class="drop-kicker">B.B <span>${queueModeLabel(queue.mode)}</span></p>
       <h1 class="drop-title drop-title-compact">${escapeHtml(BBMapGen.MAP_LABELS[queue.map])}</h1>
-      <p class="drop-tagline">Drop queue <span class="tagline-mode">(for real)</span></p>
+      <p class="drop-tagline">${tagline}</p>
     </header>
     <div class="queue-panel">
       <p class="queue-count"><span data-queue-count>${queue.count}/${queue.needed}</span> players</p>
@@ -2027,7 +2038,9 @@ function renderMatchResult() {
   const rewards = [];
   if (result.reward > 0) rewards.push(result.mode === "competitive" ? `+${result.reward} coins` : `+${formatStars(result.reward)}`);
   if (result.diamonds > 0) rewards.push(`+${result.diamonds} ${result.diamonds === 1 ? "diamond" : "diamonds"}`);
-  const rewardLine = rewards.length ? rewards.join(" · ") : "No reward this time";
+  const rewardLine = result.mode === "fun"
+    ? "For Fun — no rewards"
+    : rewards.length ? rewards.join(" · ") : "No reward this time";
   renderScene(renderCard(`
     <header class="drop-head hub-head">
       <div class="drop-crest">${crestSvg()}</div>
@@ -3409,6 +3422,12 @@ app.addEventListener("click", (event) => {
     return;
   }
 
+  if (action === "start-for-fun") {
+    pendingPlayBots = true;
+    joinMatchQueue("fun", "island");
+    return;
+  }
+
   if (action === "open-gear") {
     state.screen = "gear";
     state.gearNotice = "";
@@ -3629,7 +3648,7 @@ app.addEventListener("click", (event) => {
 
   if (action === "drop-map") {
     const { mode, map } = actionTarget.dataset;
-    if (!BBMapGen.MAP_IDS.includes(map) || (mode !== "ranked" && mode !== "competitive")) return;
+    if (!BBMapGen.MAP_IDS.includes(map) || (mode !== "ranked" && mode !== "competitive" && mode !== "fun")) return;
     joinMatchQueue(mode, map);
     return;
   }
@@ -3644,7 +3663,8 @@ app.addEventListener("click", (event) => {
     pendingPlayBots = false;
     if (matchSocket && matchSocket.readyState === WebSocket.OPEN) matchSocket.send(JSON.stringify({ t: "leave" }));
     closeMatchSocket();
-    state.screen = state.matchQueue && state.matchQueue.mode === "ranked" ? "ranked-play" : "competitive-play";
+    const qMode = state.matchQueue && state.matchQueue.mode;
+    state.screen = qMode === "ranked" ? "ranked-play" : qMode === "fun" ? "battle" : "competitive-play";
     state.matchQueue = null;
     render();
     return;

@@ -22,7 +22,9 @@ const BB_DEFAULT_SPEED = 7.5;
 const RIDE_REACH = 3.5;
 const RIDER_SEAT = 0.82;
 const BB_MAX_COLLIDE = 1.2;
-const MODES = ["ranked", "competitive"];
+const MODES = ["ranked", "competitive", "fun"];
+const FUN_BOT_TUNING = { cooldownScale: 3.2, damageScale: 0.4, engageRange: 9 };
+const FUN_HAZARD_TIME_SCALE = 0.35;
 
 const BOT_NAMES = [
   "Pebble", "Rusty", "Noodle", "Biscuit", "Sprocket", "Mango", "Turbo", "Waffles", "Gizmo", "Pickles",
@@ -110,6 +112,12 @@ function send(ws, payload) {
   if (ws && ws.readyState === 1) ws.send(JSON.stringify(payload));
 }
 
+function normalizeDrop(mode, map) {
+  if (mode === "fun") return { mode: "fun", map: "island" };
+  if (!MODES.includes(mode) || !mapGen.MAP_IDS.includes(map)) return null;
+  return { mode, map };
+}
+
 function sanitizeLoadout(loadout) {
   const weapons = Array.isArray(loadout?.weapons)
     ? loadout.weapons.filter((name) => data.WEAPON_SHOP_ITEMS.includes(name)).slice(0, 2)
@@ -124,7 +132,7 @@ class Match {
   constructor(id, mode, mapId, humans, onFinish, awardStars) {
     this.id = id;
     this.mode = mode;
-    this.mapId = mapId;
+    this.mapId = mode === "fun" ? "island" : mapId;
     this.seed = Math.floor(Math.random() * 2 ** 31);
     this.rand = mapGen.mulberry32(this.seed ^ 0x9e3779b9);
     this.map = mapGen.generateMap(mapId, this.seed);
@@ -182,6 +190,17 @@ class Match {
 
   elapsed() {
     return Date.now() - this.startAt;
+  }
+
+  botTuning() {
+    if (this.mode === "fun") return FUN_BOT_TUNING;
+    return BOT_TUNING[this.mapId];
+  }
+
+  hazardNow() {
+    const elapsed = this.elapsed();
+    const ms = this.mode === "fun" ? elapsed * FUN_HAZARD_TIME_SCALE : elapsed;
+    return mapGen.hazardAt(this.mapId, ms);
   }
 
   addPlayer(name, avatar, loadout, ws) {
@@ -516,9 +535,11 @@ class Match {
 
   finishPlayer(p, killedBy) {
     if (!p.ws) return;
-    const reward = this.mode === "competitive"
-      ? data.getPlacementReward(data.COMPETITIVE_PAYOUTS, this.mapId, p.place)
-      : data.getPlacementReward(data.RANKED_STARS, this.mapId, p.place);
+    const reward = this.mode === "fun"
+      ? 0
+      : this.mode === "competitive"
+        ? data.getPlacementReward(data.COMPETITIVE_PAYOUTS, this.mapId, p.place)
+        : data.getPlacementReward(data.RANKED_STARS, this.mapId, p.place);
     if (this.mode === "ranked" && reward > 0) {
       Promise.resolve(this.awardStars(p.name, reward)).catch(() => {});
     }
@@ -531,7 +552,7 @@ class Match {
       mode: this.mode,
       map: this.mapId,
       reward,
-      diamonds: data.getPlacementReward(data.MATCH_DIAMOND_REWARDS, this.mapId, p.place)
+      diamonds: this.mode === "fun" ? 0 : data.getPlacementReward(data.MATCH_DIAMOND_REWARDS, this.mapId, p.place)
     });
     p.ws.matchPlayer = null;
   }
@@ -693,7 +714,7 @@ class Match {
       return;
     }
     const ranged = item ? data.getWeaponRanged(item) : null;
-    const tuning = BOT_TUNING[this.mapId];
+    const tuning = this.botTuning();
     const cooldown = (ranged ? ranged.cooldownMs : data.MELEE_COOLDOWN_MS) * (p.bot ? tuning.cooldownScale : 1);
     if (now - p.lastAttackAt < cooldown) return;
     p.lastAttackAt = now;
@@ -1140,7 +1161,7 @@ class Match {
     }
 
     let enemy = null;
-    let enemyDist = now < SPAWN_PROTECT_MS ? 0 : BOT_TUNING[this.mapId].engageRange;
+    let enemyDist = now < SPAWN_PROTECT_MS ? 0 : this.botTuning().engageRange;
     this.players.forEach((other) => {
       if (other === p || !other.alive) return;
       const d = Math.hypot(other.x - p.x, other.z - p.z);
@@ -1232,7 +1253,7 @@ class Match {
     }
     const now = this.elapsed();
     const dt = TICK_MS / 1000;
-    const hazard = mapGen.hazardAt(this.mapId, now);
+    const hazard = this.hazardNow();
     this.players.forEach((p) => {
       if (!p.alive) return;
       if (p.disconnectedAt && !p.ws) {
@@ -1397,15 +1418,17 @@ function createMatchServer({ wss, verifyAccount, awardStars }) {
           send(ws, { t: "error", text: "Still signing in. Wait a moment, then tap Play Bots again." });
           return;
         }
-        const mode = MODES.includes(msg.mode) ? msg.mode : conn.mode;
-        const map = mapGen.MAP_IDS.includes(msg.map) ? msg.map : conn.map;
-        if (!mode || !map) {
+        const drop = normalizeDrop(
+          MODES.includes(msg.mode) ? msg.mode : conn.mode,
+          mapGen.MAP_IDS.includes(msg.map) ? msg.map : conn.map
+        );
+        if (!drop) {
           send(ws, { t: "error", text: "Could not start bots. Leave the queue and pick a map again." });
           return;
         }
         leaveQueue(conn);
         try {
-          startMatch(mode, map, [conn]);
+          startMatch(drop.mode, drop.map, [conn]);
         } catch (error) {
           console.error("startMatch failed:", error);
           send(ws, { t: "error", text: "Could not start the match. Try again." });
@@ -1440,12 +1463,13 @@ function createMatchServer({ wss, verifyAccount, awardStars }) {
         return;
       }
       if (msg.t === "queue") {
-        if (!MODES.includes(msg.mode) || !mapGen.MAP_IDS.includes(msg.map)) return;
+        const drop = normalizeDrop(msg.mode, msg.map);
+        if (!drop) return;
         if (!conn.username) {
-          conn.pendingQueue = { mode: msg.mode, map: msg.map };
+          conn.pendingQueue = drop;
           return;
         }
-        joinQueue(conn, msg.mode, msg.map);
+        joinQueue(conn, drop.mode, drop.map);
       } else if (msg.t === "leave") {
         leaveQueue(conn);
       }
