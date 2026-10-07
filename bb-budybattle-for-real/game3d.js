@@ -1,5 +1,6 @@
 import * as THREE from "./vendor/three.module.js";
 import { buildBbModel } from "./bb-models.js";
+import { buildWeaponModel, buildPotionModel, buildResourceModel } from "./weapon-models.js";
 
 const INTERP_DELAY_MS = 100;
 const INPUT_SEND_MS = 50;
@@ -84,36 +85,62 @@ function makeTextSprite(text, color = "#ffffff") {
   return sprite;
 }
 
-function heldItemMesh(name) {
+const TWO_HAND_HOLDS = new Set(["gun2", "heavy", "pole"]);
+const TWO_HAND_ARM_X = -1.35;
+const TWO_HAND_RIGHT_Z = -0.54;
+const TWO_HAND_LEFT_Z = 0.52;
+const TWO_HAND_MOUNT_TILT = { gun2: 0, heavy: -1.15, pole: -0.75 };
+const ONE_HAND_MELEE_TILT = -0.3;
+
+function heldItemModel(name) {
   if (!name) return null;
-  const group = new THREE.Group();
-  if (isPotionName(name)) {
-    const tint = name.includes("Red") ? 0xef4444 : name.includes("Fire") ? 0xf97316 : name.includes("Health") ? 0x22c55e : name.includes("Water") ? 0x38bdf8 : 0x3b82f6;
-    const bottle = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.28, 10), new THREE.MeshLambertMaterial({ color: tint, transparent: true, opacity: 0.85 }));
-    group.add(bottle);
-    return group;
-  }
+  if (isPotionName(name)) return buildPotionModel(name);
+  if (isResourceName(name)) return buildResourceModel(name);
   if (WEAPON_PASSIVE.includes(name)) return null;
-  const ranged = getWeaponRanged(name);
-  if (ranged) {
-    const bow = /bow/i.test(name);
-    const body = new THREE.Mesh(
-      new THREE.BoxGeometry(bow ? 0.08 : 0.12, bow ? 0.7 : 0.16, bow ? 0.1 : (name.includes("Sniper") || name.includes("Rifle") ? 0.9 : 0.5)),
-      new THREE.MeshLambertMaterial({ color: bow ? 0x8b5a2b : name === "Energy Pistol" ? 0x22d3ee : 0x334155 })
-    );
-    body.position.z = bow ? 0.1 : 0.25;
-    group.add(body);
-    return group;
+  return buildWeaponModel(name);
+}
+
+function equipHeld(buddy, name) {
+  if (buddy.heldModel) {
+    buddy.heldModel.parent?.remove(buddy.heldModel);
+    disposeObject(buddy.heldModel);
   }
-  const length = 0.35 + Math.min(1.1, getWeaponDamage(name) / 30);
-  const blade = new THREE.Mesh(
-    new THREE.BoxGeometry(0.06, 0.09, length),
-    new THREE.MeshLambertMaterial({ color: /Laser|Plasma/.test(name) ? 0x60a5fa : /Bat|Stick|Staff|Pin|Broom|Rake|Hoe|Shovel|Club/.test(name) ? 0xa16207 : 0xcbd5e1, emissive: /Laser|Plasma/.test(name) ? 0x1d4ed8 : 0x000000 })
-  );
-  blade.position.z = length / 2 + 0.08;
-  const handle = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.2), new THREE.MeshLambertMaterial({ color: 0x4b2e12 }));
-  group.add(blade, handle);
-  return group;
+  buddy.heldModel = null;
+  buddy.hold = "";
+  const model = heldItemModel(name);
+  if (!model) return;
+  buddy.heldModel = model.group;
+  buddy.hold = model.hold;
+  if (TWO_HAND_HOLDS.has(model.hold)) {
+    model.group.rotation.x = TWO_HAND_MOUNT_TILT[model.hold];
+    buddy.twoHandMount.add(model.group);
+  } else {
+    model.group.rotation.x = model.hold === "one" ? ONE_HAND_MELEE_TILT : 0;
+    buddy.hand.add(model.group);
+  }
+}
+
+function poseArms(buddy, swing, attacking, now) {
+  const [left, right] = buddy.arms;
+  const hold = buddy.hold;
+  if (TWO_HAND_HOLDS.has(hold)) {
+    let delta = 0;
+    if (hold === "gun2") delta = attacking ? -0.07 : 0;
+    else if (hold === "heavy") delta = attacking ? -0.25 + Math.sin(now / 40) * 0.85 : 0.35;
+    else delta = attacking ? 0.75 + Math.sin(now / 40) * 0.12 : 0.3;
+    buddy.twoHand.rotation.x = delta;
+    right.rotation.set(TWO_HAND_ARM_X + delta, 0, TWO_HAND_RIGHT_Z);
+    left.rotation.set(TWO_HAND_ARM_X + delta, 0, TWO_HAND_LEFT_Z);
+    return;
+  }
+  buddy.twoHand.rotation.x = 0;
+  left.rotation.set(-swing * 0.6, 0, 0);
+  const aimed = hold === "gun" || hold === "potion";
+  const armX = attacking
+    ? (aimed ? -1.5 : -2.2 + Math.sin(now / 40) * 1.2)
+    : hold === "gun" ? -1.35 : swing * 0.6;
+  right.rotation.set(armX, 0, 0);
+  if (hold === "gun" && buddy.heldModel) buddy.heldModel.rotation.x = -armX;
 }
 
 function buildBuddy(avatar, skinId) {
@@ -191,10 +218,16 @@ function buildBuddy(avatar, skinId) {
   stun.visible = false;
   group.add(stun);
   const hand = new THREE.Group();
-  hand.position.set(0, -0.66, 0.05);
+  hand.position.set(0, -0.66, 0.02);
   arms[1].add(hand);
+  const twoHand = new THREE.Group();
+  twoHand.position.set(0, 1.48, 0);
+  const twoHandMount = new THREE.Group();
+  twoHandMount.position.set(0, -0.125, 0.565);
+  twoHand.add(twoHandMount);
+  group.add(twoHand);
   const extras = outfit ? addSkinParts(group, outfit, { box, mat, head, arms, hairParts: [hairTop, hairBack] }) : { tick: null };
-  return { group, legs, arms, hand, stun, materials, tick: extras.tick };
+  return { group, legs, arms, hand, twoHand, twoHandMount, heldModel: null, hold: "", stun, materials, tick: extras.tick };
 }
 
 function addSkinParts(group, outfit, { box, mat, arms, hairParts }) {
@@ -1112,11 +1145,17 @@ function buildWorld(scene, map) {
   map.props.forEach((prop) => {
     propParts(prop).forEach((part) => detailEntries.push({ part, buildingId: prop.buildingId, level: prop.level, ox: prop.x, oy: prop.y, oz: prop.z, yaw: prop.yaw || 0, prop }));
   });
+  const breakables = new Map();
+  const addBreakablePart = (kind, id, x, y, z, mesh, index) => {
+    const key = `${kind}:${id}`;
+    if (!breakables.has(key)) breakables.set(key, { parts: [], position: new THREE.Vector3(x, y, z), broken: false });
+    breakables.get(key).parts.push({ mesh, index });
+  };
   (map.cars || []).forEach((car) => {
-    carParts(car.color).forEach((part) => detailEntries.push({ part, buildingId: null, level: 0, ox: car.x, oy: car.y + 0.14, oz: car.z, yaw: car.yaw, prop: null }));
+    carParts(car.color).forEach((part) => detailEntries.push({ part, buildingId: null, level: 0, ox: car.x, oy: car.y + 0.14, oz: car.z, yaw: car.yaw, prop: null, breakable: { kind: "car", id: car.id, x: car.x, y: car.y + 0.8, z: car.z } }));
   });
   (map.lamps || []).forEach((lamp) => {
-    lampParts().forEach((part) => detailEntries.push({ part, buildingId: null, level: 0, ox: lamp.x, oy: lamp.y + 0.32, oz: lamp.z, yaw: lamp.yaw, prop: null }));
+    lampParts().forEach((part) => detailEntries.push({ part, buildingId: null, level: 0, ox: lamp.x, oy: lamp.y + 0.32, oz: lamp.z, yaw: lamp.yaw, prop: null, breakable: { kind: "lamp", id: lamp.id, x: lamp.x, y: lamp.y + 1.5, z: lamp.z } }));
   });
   const detailMeshes = {
     box: buildInstanced(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial(), detailEntries.filter((e) => e.part.s === "box").length, false),
@@ -1125,7 +1164,7 @@ function buildWorld(scene, map) {
   };
   const detailCounts = { box: 0, cyl: 0, glow: 0 };
   const propVisuals = new Map();
-  detailEntries.forEach(({ part, buildingId, level, ox, oy, oz, yaw, prop }) => {
+  detailEntries.forEach(({ part, buildingId, level, ox, oy, oz, yaw, prop, breakable }) => {
     const mesh = detailMeshes[part.s];
     const index = detailCounts[part.s]++;
     const cos = Math.cos(yaw);
@@ -1136,6 +1175,7 @@ function buildWorld(scene, map) {
     dummy.updateMatrix();
     mesh.setMatrixAt(index, dummy.matrix);
     mesh.setColorAt(index, color.setHex(part.c));
+    if (breakable) addBreakablePart(breakable.kind, breakable.id, breakable.x, breakable.y, breakable.z, mesh, index);
     if (buildingId === null) return;
     const entry = { mesh, index, level, matrix: dummy.matrix.clone() };
     if (prop) {
@@ -1165,6 +1205,7 @@ function buildWorld(scene, map) {
     dummy.scale.set(1, tree.height * 0.6, 1);
     dummy.updateMatrix();
     trunks.setMatrixAt(index, dummy.matrix);
+    addBreakablePart("tree", tree.id, tree.x, ground + tree.height * 0.5, tree.z, trunks, index);
   });
   rounds.forEach((tree, index) => {
     const ground = BBMapGen.terrainHeight(map, tree.x, tree.z);
@@ -1172,6 +1213,7 @@ function buildWorld(scene, map) {
     dummy.scale.setScalar(tree.height * 0.32);
     dummy.updateMatrix();
     roundTops.setMatrixAt(index, dummy.matrix);
+    addBreakablePart("tree", tree.id, tree.x, ground + tree.height * 0.5, tree.z, roundTops, index);
   });
   pines.forEach((tree, index) => {
     const ground = BBMapGen.terrainHeight(map, tree.x, tree.z);
@@ -1179,6 +1221,7 @@ function buildWorld(scene, map) {
     dummy.scale.set(tree.height * 0.28, tree.height * 0.75, tree.height * 0.28);
     dummy.updateMatrix();
     pineTops.setMatrixAt(index, dummy.matrix);
+    addBreakablePart("tree", tree.id, tree.x, ground + tree.height * 0.5, tree.z, pineTops, index);
   });
   scene.add(trunks, roundTops, pineTops);
 
@@ -1189,6 +1232,7 @@ function buildWorld(scene, map) {
     dummy.rotation.set(0, rock.x, 0);
     dummy.updateMatrix();
     rocks.setMatrixAt(index, dummy.matrix);
+    addBreakablePart("rock", rock.id, rock.x, BBMapGen.terrainHeight(map, rock.x, rock.z) + rock.radius * 0.5, rock.z, rocks, index);
   });
   dummy.rotation.set(0, 0, 0);
   scene.add(rocks);
@@ -1319,7 +1363,50 @@ function buildWorld(scene, map) {
     stoplightVisuals.set(light.id, { group, bulbs, bulbMats, state: { ...light } });
   });
 
-  return { levelParts, chests, doorVisuals, propVisuals, stoplightVisuals };
+  return { levelParts, chests, doorVisuals, propVisuals, stoplightVisuals, breakables };
+}
+
+const BREAKABLE_POOFS = {
+  tree: [0x4d7c0f, 2],
+  rock: [0x8a8580, 1.6],
+  car: [0x6b7280, 2.4],
+  lamp: [0xfde68a, 1]
+};
+
+function hideBreakable(entry) {
+  if (!entry || entry.broken) return false;
+  entry.broken = true;
+  entry.parts.forEach(({ mesh, index }) => {
+    mesh.setMatrixAt(index, HIDDEN_MATRIX);
+    mesh.instanceMatrix.needsUpdate = true;
+  });
+  return true;
+}
+
+const BLOCK_GEOMETRY = new THREE.BoxGeometry(BLOCK_SIZE, BLOCK_HEIGHT, BLOCK_SIZE);
+const BLOCK_EDGES = new THREE.EdgesGeometry(BLOCK_GEOMETRY);
+const BLOCK_LOOKS = {
+  wood: { color: 0xa0703c, edge: 0x5b3a1a, roughness: 0.9, metalness: 0 },
+  metal: { color: 0x9ca3af, edge: 0x4b5563, roughness: 0.35, metalness: 0.75 }
+};
+
+function buildBlockMesh(block) {
+  const look = BLOCK_LOOKS[block.mat] || BLOCK_LOOKS.wood;
+  const material = new THREE.MeshStandardMaterial({ color: look.color, roughness: look.roughness, metalness: look.metalness });
+  const mesh = new THREE.Mesh(BLOCK_GEOMETRY, material);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  mesh.add(new THREE.LineSegments(BLOCK_EDGES, new THREE.LineBasicMaterial({ color: look.edge })));
+  mesh.position.set(block.x, block.y + BLOCK_HEIGHT / 2, block.z);
+  mesh.userData = { look, maxHp: block.maxHp };
+  tintBlock(mesh, block.hp);
+  return mesh;
+}
+
+function tintBlock(mesh, hp) {
+  const { look, maxHp } = mesh.userData;
+  const health = Math.max(0, Math.min(1, hp / maxHp));
+  mesh.material.color.setHex(look.color).multiplyScalar(0.45 + 0.55 * health);
 }
 
 function syncDoorVisual(entry) {
@@ -1343,8 +1430,7 @@ function syncPropVisual(entry) {
 
 function syncStoplightVisual(entry) {
   if (!entry || entry.broken || !entry.state.broken) return;
-  entry.group.rotation.z = 0.55;
-  entry.group.position.y -= 0.4;
+  entry.group.visible = false;
   entry.broken = true;
 }
 
@@ -1364,6 +1450,7 @@ function renderHudShell(root) {
       <div class="mh-chip mh-alive" data-hud-alive></div>
       <div class="mh-chip" data-hud-kills></div>
       <div class="mh-chip mh-coins" data-hud-coins></div>
+      <div class="mh-chip mh-mats" data-hud-mats></div>
       <div class="mh-chip mh-hazard" data-hud-hazard></div>
     </div>
     <div class="mh-feed" data-hud-feed></div>
@@ -1371,7 +1458,7 @@ function renderHudShell(root) {
     <div class="mh-toast" data-hud-toast></div>
     <div class="mh-prompt" data-hud-prompt></div>
     <div class="mh-hotbar" data-hud-hotbar></div>
-    <div class="mh-help">WASD / arrows move · mouse aims · click attack · Space jump · 1-8 or wheel switch · Enter door / pick up · Backspace drop · Q shop · R ride big B.B.s · right-drag turn camera · Z scope</div>
+    <div class="mh-help">WASD / arrows move · mouse aims · click attack · Space jump · 1-8 or wheel switch · Enter door / pick up · Backspace drop · Q shop · E build · F wood/metal · R ride big B.B.s · right-drag turn camera · Z scope</div>
     </div>
     <div class="mh-shop" data-hud-shop hidden></div>
   `);
@@ -1428,7 +1515,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
   tutorialEl.hidden = true;
   tutorialEl.innerHTML = `
     <p class="mh-tutorial-title">First drop — controls</p>
-    <p class="mh-tutorial-body"><strong>Move</strong> WASD or arrow keys · <strong>Aim</strong> mouse · <strong>Attack</strong> click · <strong>Jump</strong> Space · <strong>Switch gear</strong> 1–8 or scroll wheel · <strong>Doors / pick up</strong> Enter · <strong>Drop item</strong> Backspace · <strong>Shop</strong> Q · <strong>Ride big B.B.s</strong> R · <strong>Turn camera</strong> right-drag · <strong>Scope</strong> Z</p>
+    <p class="mh-tutorial-body"><strong>Move</strong> WASD or arrow keys · <strong>Aim</strong> mouse · <strong>Attack</strong> click · <strong>Jump</strong> Space · <strong>Switch gear</strong> 1–8 or scroll wheel · <strong>Doors / pick up</strong> Enter · <strong>Drop item</strong> Backspace · <strong>Shop</strong> Q · <strong>Build</strong> E (F swaps wood/metal — smash trees, cars, lights and furniture for materials) · <strong>Ride big B.B.s</strong> R · <strong>Turn camera</strong> right-drag · <strong>Scope</strong> Z</p>
     <button class="mh-tutorial-btn" type="button" data-action="dismiss-battle-tutorial">Got it!</button>
   `;
   root.appendChild(tutorialEl);
@@ -1466,6 +1553,8 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     bbs: new Map(),
     projectiles: new Map(),
     loot: new Map(),
+    blocks: new Map(),
+    buildMat: "wood",
     fallingRocks: new Map(),
     effects: [],
     me: null,
@@ -1591,13 +1680,29 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     sprite.userData.lootId = entry.id;
     const ring = new THREE.Mesh(
       new THREE.RingGeometry(0.45, 0.7, 20),
-      new THREE.MeshBasicMaterial({ color: isPotionName(entry.item) ? 0xa855f7 : 0xfacc15, transparent: true, opacity: 0.75, side: THREE.DoubleSide, depthWrite: false })
+      new THREE.MeshBasicMaterial({ color: isPotionName(entry.item) ? 0xa855f7 : entry.item === "Wood" ? 0xa0703c : entry.item === "Metal" ? 0x9ca3af : 0xfacc15, transparent: true, opacity: 0.75, side: THREE.DoubleSide, depthWrite: false })
     );
     ring.rotation.x = -Math.PI / 2;
     ring.position.y = 0.08;
     group.add(sprite, ring);
+    let spinner = null;
+    const model = heldItemModel(entry.item);
+    if (model) {
+      model.group.updateMatrixWorld(true);
+      const bounds = new THREE.Box3().setFromObject(model.group);
+      const size = bounds.getSize(new THREE.Vector3());
+      const center = bounds.getCenter(new THREE.Vector3());
+      model.group.position.sub(center);
+      spinner = new THREE.Group();
+      spinner.add(model.group);
+      spinner.scale.setScalar(Math.min(1.6, 1.5 / Math.max(size.x, size.y, size.z, 0.01)));
+      spinner.position.y = 0.95;
+      spinner.rotation.z = 0.35;
+      group.add(spinner);
+      sprite.material.opacity = 0;
+    }
     group.position.set(entry.x, entry.y, entry.z);
-    group.userData = { entry, sprite, phase: Math.random() * 6 };
+    group.userData = { entry, sprite, spinner, phase: Math.random() * 6 };
     scene.add(group);
     g.loot.set(entry.id, group);
   }
@@ -1606,6 +1711,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     const group = g.loot.get(id);
     if (!group) return;
     scene.remove(group);
+    if (group.userData.spinner) disposeObject(group.userData.spinner);
     g.loot.delete(id);
   }
 
@@ -1739,9 +1845,48 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
             syncStoplightVisual(entry);
             spawnPoof(entry.group.position.x, entry.group.position.y + 2, entry.group.position.z, 0xef4444, 1.2);
           }
+        } else if (BREAKABLE_POOFS[ev.kind]) {
+          breakWorldThing(ev.kind, ev.id, true);
         }
+      } else if (ev.k === "block+") {
+        addBlock(ev);
+      } else if (ev.k === "blockhit") {
+        const mesh = g.blocks.get(ev.id);
+        if (mesh) tintBlock(mesh, ev.hp);
+      } else if (ev.k === "block-") {
+        removeBlock(ev.id, true);
       }
     });
+  }
+
+  function breakWorldThing(kind, id, withPoof) {
+    const list = { tree: map.trees, rock: map.rocks, car: map.cars, lamp: map.lamps }[kind];
+    if (list && list[id]) list[id].broken = true;
+    if (kind === "car") map.carBlocks.forEach((block) => { if (block.car === id) block.broken = true; });
+    const entry = world.breakables.get(`${kind}:${id}`);
+    if (!hideBreakable(entry) || !withPoof) return;
+    const [colorHex, size] = BREAKABLE_POOFS[kind];
+    spawnPoof(entry.position.x, entry.position.y, entry.position.z, colorHex, size);
+  }
+
+  function addBlock(block) {
+    if (g.blocks.has(block.id)) return;
+    const mesh = buildBlockMesh(block);
+    scene.add(mesh);
+    g.blocks.set(block.id, mesh);
+    map.blocks.push({ id: block.id, x: block.x, z: block.z, y: block.y, w: BLOCK_SIZE, d: BLOCK_SIZE, h: BLOCK_HEIGHT });
+  }
+
+  function removeBlock(id, withPoof) {
+    const mesh = g.blocks.get(id);
+    if (!mesh) return;
+    if (withPoof) spawnPoof(mesh.position.x, mesh.position.y, mesh.position.z, mesh.userData.look.color, 1.3);
+    scene.remove(mesh);
+    mesh.material.dispose();
+    mesh.children.forEach((child) => child.material.dispose());
+    g.blocks.delete(id);
+    const index = map.blocks.findIndex((block) => block.id === id);
+    if (index >= 0) map.blocks.splice(index, 1);
   }
 
   function nearestDoor(self) {
@@ -1784,6 +1929,13 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
         entry.state.broken = true;
         syncStoplightVisual(entry);
       });
+    }
+    [["tree", msg.treesBroken], ["rock", msg.rocksBroken], ["car", msg.carsBroken], ["lamp", msg.lampsBroken]].forEach(([kind, ids]) => {
+      if (ids) ids.forEach((id) => breakWorldThing(kind, id, false));
+    });
+    if (msg.blocks) {
+      [...g.blocks.keys()].forEach((id) => removeBlock(id, false));
+      msg.blocks.forEach(addBlock);
     }
   }
 
@@ -1828,6 +1980,12 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     hud("alive").textContent = `${g.alive} alive`;
     hud("kills").textContent = `${me.kills} KO`;
     hud("coins").innerHTML = `${shopCoinSvg()} ${me.coins}`;
+    const matsKey = `${me.wood}|${me.metal}|${g.buildMat}`;
+    if (matsKey !== g.matsKey) {
+      g.matsKey = matsKey;
+      const chip = (mat, label, count) => `<span class="mh-mat${g.buildMat === mat ? " mh-mat--active" : ""}">${label} ${count}</span>`;
+      hud("mats").innerHTML = `${chip("wood", "🪵", me.wood)} ${chip("metal", "🔩", me.metal)} <span class="mh-mat-hint">E build</span>`;
+    }
 
     const hotbarKey = JSON.stringify([me.inv, me.held]);
     if (hotbarKey !== g.hotbarKey) {
@@ -1945,7 +2103,22 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       toggleShop();
       return;
     }
-    if (code === "KeyB" || code === "KeyE") return;
+    if (code === "KeyB") return;
+    if (code === "KeyE") {
+      if (!g.shopOpen && g.me) {
+        const other = g.buildMat === "wood" ? "metal" : "wood";
+        const mat = g.me[g.buildMat] < BUILD_BLOCKS[g.buildMat].cost && g.me[other] >= BUILD_BLOCKS[other].cost ? other : g.buildMat;
+        sendMsg({ t: "build", mat });
+      }
+      return;
+    }
+    if (code === "KeyF") {
+      g.buildMat = g.buildMat === "wood" ? "metal" : "wood";
+      const spec = BUILD_BLOCKS[g.buildMat];
+      toast(`Building with ${spec.item.toLowerCase()} (${spec.cost} per block, ${spec.hp} HP)`, 1400);
+      updateHud();
+      return;
+    }
     if (code === "Escape" && g.shopOpen) {
       toggleShop(false);
       return;
@@ -2117,20 +2290,12 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       const swing = speed > 0.5 && !entry.mountId ? Math.sin(entry.walk) * 0.7 : 0;
       entry.legs[0].rotation.x = entry.mountId ? -1.45 : swing;
       entry.legs[1].rotation.x = entry.mountId ? -1.45 : -swing;
-      entry.arms[0].rotation.x = -swing * 0.6;
       const heldName = row[7];
-      const ranged = heldName && getWeaponRanged(heldName);
-      const attacking = row[9] === 1;
-      entry.arms[1].rotation.x = attacking ? (ranged ? -1.5 : -2.2 + Math.sin(now / 40) * 1.2) : ranged ? -1.35 : swing * 0.6;
       if (entry.heldName !== heldName) {
         entry.heldName = heldName;
-        entry.hand.clear();
-        const mesh = heldItemMesh(heldName);
-        if (mesh) {
-          mesh.rotation.x = ranged ? 0 : Math.PI / 2;
-          entry.hand.add(mesh);
-        }
+        equipHeld(entry, heldName);
       }
+      poseArms(entry, swing, row[9] === 1, now);
       entry.stun.visible = row[8] === 1;
       if (entry.stun.visible) entry.stun.rotation.z += dt * 6;
       if (entry.hp !== row[5]) {
@@ -2289,6 +2454,11 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     let nearDist = PICKUP_RANGE;
     g.loot.forEach((group) => {
       group.userData.sprite.position.y = 1 + Math.sin(now / 400 + group.userData.phase) * 0.15;
+      const spinner = group.userData.spinner;
+      if (spinner) {
+        spinner.position.y = 0.95 + Math.sin(now / 400 + group.userData.phase) * 0.15;
+        spinner.rotation.y = now / 700 + group.userData.phase;
+      }
       if (!self || Math.abs(group.position.y - self.group.position.y) >= 2.5) return;
       const d = Math.hypot(group.position.x - self.group.position.x, group.position.z - self.group.position.z);
       if (d < nearDist) {
@@ -2315,7 +2485,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       if (door) doorText = door.open ? "Enter: close door" : "Enter: open door";
     }
     const prompt = hud("prompt");
-    prompt.textContent = [doorText, nearLoot ? `Enter / double-click: pick up ${nearLoot.item}` : "", rideText].filter(Boolean).join(" · ");
+    prompt.textContent = [doorText, nearLoot ? `Enter / double-click: pick up ${nearLoot.amount ? `${nearLoot.amount} ` : ""}${nearLoot.item}` : "", rideText].filter(Boolean).join(" · ");
     prompt.classList.toggle("show", Boolean(doorText || nearLoot || rideText));
 
     const lightPhase = Math.floor(now / 2200) % 3;
@@ -2563,21 +2733,20 @@ function buildPreviewBuddy(avatar, weapons, skinId) {
   const buddy = buildBuddy(avatar, skinId);
   buddy.stun.visible = false;
   const [first, second] = weapons || [];
-  const right = heldItemMesh(first);
-  if (right) {
-    right.rotation.x = getWeaponRanged(first) ? 0 : Math.PI / 2;
-    buddy.hand.add(right);
-  }
-  if (second) {
-    const left = heldItemMesh(second);
-    if (left) {
+  equipHeld(buddy, first);
+  if (second && !TWO_HAND_HOLDS.has(buddy.hold)) {
+    const left = heldItemModel(second);
+    if (left && !TWO_HAND_HOLDS.has(left.hold)) {
       const leftHand = new THREE.Group();
-      leftHand.position.set(0, -0.66, 0.05);
-      left.rotation.x = getWeaponRanged(second) ? 0 : Math.PI / 2;
-      leftHand.add(left);
+      leftHand.position.set(0, -0.66, 0.02);
+      left.group.rotation.x = left.hold === "one" ? ONE_HAND_MELEE_TILT : Math.PI / 2;
+      leftHand.add(left.group);
       buddy.arms[0].add(leftHand);
+    } else if (left) {
+      disposeObject(left.group);
     }
   }
+  if (buddy.hold === "gun") buddy.heldModel.rotation.x = Math.PI / 2;
   return buddy;
 }
 
@@ -2726,8 +2895,13 @@ function mountBuddyPreview(container, opts) {
     if (view.buddy) {
       const breathe = Math.sin(now / 520);
       view.buddy.group.position.y = Math.abs(breathe) * 0.02;
-      view.buddy.arms[0].rotation.x = 0.08 + breathe * 0.05;
-      view.buddy.arms[1].rotation.x = -0.08 - breathe * 0.05;
+      if (TWO_HAND_HOLDS.has(view.buddy.hold)) {
+        poseArms(view.buddy, 0, false, now);
+        view.buddy.twoHand.rotation.x += breathe * 0.03;
+      } else {
+        view.buddy.arms[0].rotation.x = 0.08 + breathe * 0.05;
+        view.buddy.arms[1].rotation.x = -0.08 - breathe * 0.05;
+      }
       if (view.buddy.tick) view.buddy.tick(now);
     }
     if (view.bbModel && view.bb && (BB_CATALOG.find((entry) => entry.name === view.bb)?.size || 1) < 1) {

@@ -392,6 +392,18 @@ const WEAPON_RANGED = {
 const WEAPON_PASSIVE = ["Body Armor", "Combat Helmet", "Riot Shield", "Jetpack", "Grappling Hook"];
 const WEAPON_SINGLE_USE = new Set(["Throwing Knife", "Shuriken"]);
 
+const BUILD_BLOCKS = {
+  wood: { item: "Wood", cost: 5, hp: 45 },
+  metal: { item: "Metal", cost: 5, hp: 75 }
+};
+const BLOCK_SIZE = 2;
+const BLOCK_HEIGHT = 1.5;
+const RESOURCE_ITEMS = ["Wood", "Metal"];
+
+function isResourceName(name) {
+  return RESOURCE_ITEMS.includes(name);
+}
+
 const MELEE_RANGE = 2.8;
 const MELEE_COOLDOWN_MS = 450;
 const MATCH_INVENTORY_SLOTS = 8;
@@ -552,6 +564,11 @@ if (typeof module !== "undefined") {
     getPlacementReward,
     getWeaponRanged,
     isPotionName,
-    isWeaponSingleUse
+    isWeaponSingleUse,
+    BUILD_BLOCKS,
+    BLOCK_SIZE,
+    BLOCK_HEIGHT,
+    RESOURCE_ITEMS,
+    isResourceName
   };
 }

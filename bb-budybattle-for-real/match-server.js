@@ -79,6 +79,21 @@ const GUARD_DAMAGE_SCALE = 0.4;
 const WILD_ROAM = 10;
 const WILD_LEASH = 35;
 const BB_KIND_CODE = { pet: 0, guard: 1, wild: 2 };
+const HARVEST_MIN_DAMAGE = 8;
+const BUILD_REACH = 2.2;
+const BUILD_COOLDOWN_MS = 200;
+const MAX_BLOCK_STACK = 14;
+const RESOURCE_COLLECT_RANGE = 1.6;
+const PROP_DROPS = {
+  bed: { wood: 4 }, wardrobe: { wood: 4 }, sofa: { wood: 2 }, tv: { metal: 2 }, table: { wood: 3 },
+  chair: { wood: 1 }, kitchen: { wood: 2, metal: 2 }, fridge: { metal: 4 }, bookshelf: { wood: 3 },
+  plant: { wood: 1 }, lamp: { metal: 1 }, shelfGoods: { wood: 2, metal: 1 }, counter: { wood: 3 },
+  crate: { wood: 3 }, barrel: { wood: 1, metal: 2 }, pallet: { wood: 3 }, rack: { metal: 4 },
+  desk: { wood: 3 }, officeChair: { metal: 1 }, cooler: { metal: 2 }, cabinet: { metal: 2 }
+};
+const WORLD_DROPS = {
+  door: { wood: 3 }, light: { metal: 3 }, tree: { wood: 5 }, rock: { metal: 2 }, car: { metal: 8 }, lamp: { metal: 2 }
+};
 
 function rollFromPool(rand, pool, total) {
   let roll = rand() * total;
@@ -139,6 +154,16 @@ class Match {
     this.doors = this.map.doors.map((d) => ({ ...d }));
     this.props = this.map.props.map((p) => ({ ...p }));
     this.stoplights = this.map.stoplights.map((s) => ({ ...s }));
+    this.map.trees.forEach((tree) => {
+      tree.y = mapGen.terrainHeight(this.map, tree.x, tree.z);
+      tree.hp = tree.kind === "pine" ? 60 : 50;
+    });
+    this.map.rocks.forEach((rock) => {
+      rock.y = mapGen.terrainHeight(this.map, rock.x, rock.z);
+      rock.hp = Math.round(50 + rock.radius * 25);
+    });
+    this.map.cars.forEach((car) => { car.hp = 150; });
+    this.map.lamps.forEach((lamp) => { lamp.hp = 40; });
     this.onFinish = onFinish;
     this.awardStars = awardStars;
     this.startAt = Date.now();
@@ -225,6 +250,9 @@ class Match {
       inv,
       held: 0,
       coins: 0,
+      wood: 0,
+      metal: 0,
+      lastBuildAt: -99999,
       kills: 0,
       effect: null,
       stunUntil: 0,
@@ -375,34 +403,148 @@ class Match {
     return true;
   }
 
-  damageWorldProps(p, damage, inFront) {
-    const hit = (tx, tz, range) => inFront(tx, tz, range) && Math.hypot(tx - p.x, tz - p.z) <= range;
+  damageWorldProps(p, rawDamage, inFront) {
+    const damage = Math.max(HARVEST_MIN_DAMAGE, rawDamage);
+    const hit = (tx, tz, range) => Math.abs(tx - p.x) <= range && Math.abs(tz - p.z) <= range && inFront(tx, tz, range) && Math.hypot(tx - p.x, tz - p.z) <= range;
     const range = data.MELEE_RANGE + 0.8;
-    this.doors.forEach((door) => {
-      if (door.broken || Math.abs(door.y - p.y) > 2.5 || !hit(door.x, door.z, range)) return;
-      door.hp -= damage;
-      if (door.hp <= 0) {
-        door.broken = true;
-        door.open = true;
-        this.events.push({ k: "break", kind: "door", id: door.id });
-      }
+    const smash = (list, kind, reach, drops, heightOk = (entry) => Math.abs(entry.y - p.y) <= 3) => {
+      list.forEach((entry) => {
+        if (entry.broken || !heightOk(entry) || !hit(entry.x, entry.z, reach)) return;
+        entry.hp -= damage;
+        if (entry.hp > 0) return;
+        entry.broken = true;
+        this.events.push({ k: "break", kind, id: entry.id });
+        this.dropResources(entry.x, entry.z, entry.y, drops(entry));
+      });
+    };
+    smash(this.doors, "door", range, () => WORLD_DROPS.door, (door) => Math.abs(door.y - p.y) <= 2.5);
+    this.doors.forEach((door) => { if (door.broken) door.open = true; });
+    smash(this.props, "prop", range, (prop) => PROP_DROPS[prop.type] || { wood: 1 }, (prop) => Math.abs(prop.y - p.y) <= 2.5);
+    smash(this.stoplights, "light", range + 0.5, () => WORLD_DROPS.light);
+    smash(this.map.trees, "tree", range + 0.7, () => WORLD_DROPS.tree);
+    smash(this.map.rocks, "rock", range + 1.2, () => WORLD_DROPS.rock);
+    smash(this.map.lamps, "lamp", range + 0.3, () => WORLD_DROPS.lamp);
+    smash(this.map.cars, "car", range + 1.8, () => WORLD_DROPS.car);
+    this.map.carBlocks.forEach((block) => { if (this.map.cars[block.car].broken) block.broken = true; });
+    const half = data.BLOCK_SIZE / 2;
+    [...this.map.blocks].forEach((block) => {
+      if (block.y > p.y + 2.4 || block.y + block.h < p.y - 0.6) return;
+      const nx = Math.max(block.x - half, Math.min(p.x, block.x + half));
+      const nz = Math.max(block.z - half, Math.min(p.z, block.z + half));
+      if (Math.hypot(nx - p.x, nz - p.z) > data.MELEE_RANGE) return;
+      if (!inFront(block.x, block.z, range + half)) return;
+      this.damageBlock(block, damage);
     });
-    this.props.forEach((prop) => {
-      if (prop.broken || !hit(prop.x, prop.z, range)) return;
-      if (Math.abs(prop.y - p.y) > 2.5) return;
-      prop.hp -= damage;
-      if (prop.hp <= 0) {
-        prop.broken = true;
-        this.events.push({ k: "break", kind: "prop", id: prop.id });
+  }
+
+  dropResources(x, z, y, drops) {
+    if (drops.wood) this.dropLoot(x, z, "Wood", y, drops.wood);
+    if (drops.metal) this.dropLoot(x, z, "Metal", y, drops.metal);
+  }
+
+  blockPayload(block) {
+    return { id: block.id, mat: block.mat, x: block.x, z: block.z, y: block.y, hp: Math.ceil(block.hp), maxHp: block.maxHp };
+  }
+
+  damageBlock(block, damage) {
+    block.hp -= damage;
+    if (block.hp > 0) {
+      this.events.push({ k: "blockhit", id: block.id, hp: Math.ceil(block.hp) });
+      return;
+    }
+    const index = this.map.blocks.indexOf(block);
+    if (index < 0) return;
+    this.map.blocks.splice(index, 1);
+    this.events.push({ k: "block-", id: block.id });
+    this.dropResources(block.x, block.z, block.y, { [block.mat]: data.BUILD_BLOCKS[block.mat].cost });
+  }
+
+  blockOnSegment(ax, ay, az, bx, by, bz) {
+    if (!this.map.blocks.length) return null;
+    const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay, bz - az) / 0.8));
+    const half = data.BLOCK_SIZE / 2;
+    for (let i = 1; i <= steps; i += 1) {
+      const t = i / steps;
+      const x = ax + (bx - ax) * t;
+      const y = ay + (by - ay) * t;
+      const z = az + (bz - az) * t;
+      for (const block of this.map.blocks) {
+        if (Math.abs(x - block.x) <= half && Math.abs(z - block.z) <= half && y >= block.y && y <= block.y + block.h) return block;
       }
-    });
-    this.stoplights.forEach((light) => {
-      if (light.broken || !hit(light.x, light.z, range + 0.5)) return;
-      light.hp -= damage;
-      if (light.hp <= 0) {
-        light.broken = true;
-        this.events.push({ k: "break", kind: "light", id: light.id });
+    }
+    return null;
+  }
+
+  build(p, mat) {
+    const spec = data.BUILD_BLOCKS[mat];
+    if (!spec || p.riding) return;
+    const notice = (text) => send(p.ws, { t: "notice", text });
+    const now = this.elapsed();
+    if (now - p.lastBuildAt < BUILD_COOLDOWN_MS) return;
+    if (p[mat] < spec.cost) {
+      notice(`Need ${spec.cost} ${spec.item.toLowerCase()} to build (you have ${p[mat]})`);
+      return;
+    }
+    const size = data.BLOCK_SIZE;
+    const height = data.BLOCK_HEIGHT;
+    const half = size / 2;
+    const tx = p.x + Math.sin(p.yaw) * BUILD_REACH;
+    const tz = p.z + Math.cos(p.yaw) * BUILD_REACH;
+    const x = (Math.floor(tx / size) + 0.5) * size;
+    const z = (Math.floor(tz / size) + 0.5) * size;
+    if (Math.abs(x) > mapGen.MAP_HALF - size || Math.abs(z) > mapGen.MAP_HALF - size) return;
+    const corners = [[-1, -1], [1, -1], [-1, 1], [1, 1], [0, 0]];
+    if (corners.some(([cx, cz]) => mapGen.buildingAt(this.map, x + cx * (half - 0.05), z + cz * (half - 0.05)))) {
+      notice("Can't build inside buildings");
+      return;
+    }
+    const ground = mapGen.terrainHeight(this.map, x, z);
+    let y = p.y - ground > height * 0.5 ? Math.max(ground, p.y - height) : ground;
+    const sameCell = this.map.blocks.filter((block) => block.x === x && block.z === z);
+    let moved = true;
+    while (moved) {
+      moved = false;
+      for (const block of sameCell) {
+        if (y < block.y + block.h - 0.01 && y + height > block.y + 0.01) {
+          y = block.y + block.h;
+          moved = true;
+        }
       }
+    }
+    if (y > ground + MAX_BLOCK_STACK * height) {
+      notice("Too high to build");
+      return;
+    }
+    const blocked = (ex, ez, ey, eh, r) => Math.abs(ex - x) < half + r && Math.abs(ez - z) < half + r && ey < y + height && ey + eh > y;
+    if (this.players.some((other) => other.alive && blocked(other.x, other.z, other.y, mapGen.PLAYER_HEIGHT, PLAYER_RADIUS - 0.05))
+      || this.bbs.some((bb) => bb.alive && blocked(bb.x, bb.z, bb.y, bb.height, Math.min(bb.radius, BB_MAX_COLLIDE) - 0.05))) {
+      notice("Something is in the way");
+      return;
+    }
+    p[mat] -= spec.cost;
+    p.lastBuildAt = now;
+    const block = { id: this.nextId++, mat, owner: p.id, x, z, y: round2(y), w: size, d: size, h: height, hp: spec.hp, maxHp: spec.hp };
+    this.map.blocks.push(block);
+    this.events.push({ k: "block+", ...this.blockPayload(block) });
+  }
+
+  collectResource(p, entry) {
+    if (entry.item === "Wood") p.wood += entry.amount || 1;
+    else p.metal += entry.amount || 1;
+    this.loot.delete(entry.id);
+    this.events.push({ k: "loot-", id: entry.id });
+  }
+
+  autoCollectResources() {
+    if (!this.loot.size) return;
+    const piles = [...this.loot.values()].filter((entry) => data.isResourceName(entry.item));
+    if (!piles.length) return;
+    this.players.forEach((p) => {
+      if (!p.alive || p.riding) return;
+      piles.forEach((entry) => {
+        if (!this.loot.has(entry.id) || Math.abs(entry.y - p.y) > 2) return;
+        if (Math.hypot(entry.x - p.x, entry.z - p.z) <= RESOURCE_COLLECT_RANGE) this.collectResource(p, entry);
+      });
     });
   }
 
@@ -488,7 +630,7 @@ class Match {
     this.events.push({ k: "loot+", ...entry });
   }
 
-  dropLoot(x, z, item, y) {
+  dropLoot(x, z, item, y, amount = 0) {
     const id = this.nextId++;
     const angle = this.rand() * Math.PI * 2;
     const dist = 0.6 + this.rand() * 1.8;
@@ -499,6 +641,7 @@ class Match {
       lz = z;
     }
     const entry = { id, x: round2(lx), z: round2(lz), y: round2(mapGen.groundHeight(this.map, lx, lz, y)), item };
+    if (amount) entry.amount = amount;
     this.loot.set(id, entry);
     this.events.push({ k: "loot+", ...entry });
   }
@@ -510,6 +653,9 @@ class Match {
     p.place = place;
     p.inv.forEach((item) => { if (item) this.dropLoot(p.x, p.z, item, p.y); });
     p.inv = p.inv.map(() => null);
+    this.dropResources(p.x, p.z, p.y, { wood: p.wood, metal: p.metal });
+    p.wood = 0;
+    p.metal = 0;
     this.bbs.forEach((bb) => {
       if (bb.owner === p.id && bb.alive) {
         bb.alive = false;
@@ -628,6 +774,8 @@ class Match {
       this.toggleRide(p);
     } else if (msg.t === "drop") {
       this.dropHeld(p);
+    } else if (msg.t === "build") {
+      this.build(p, String(msg.mat || ""));
     }
   }
 
@@ -653,6 +801,10 @@ class Match {
       });
     }
     if (!target) return false;
+    if (data.isResourceName(target.item)) {
+      this.collectResource(p, target);
+      return true;
+    }
     const slot = this.freeSlot(p);
     if (slot < 0) {
       if (p.ws) send(p.ws, { t: "notice", text: "Inventory full (8/8)" });
@@ -1045,6 +1197,11 @@ class Match {
       const nx = proj.x + stepX;
       const ny = proj.y + stepY;
       const nz = proj.z + stepZ;
+      const block = this.blockOnSegment(proj.x, proj.y, proj.z, nx, ny, nz);
+      if (block) {
+        this.damageBlock(block, proj.damage);
+        return false;
+      }
       if (mapGen.segmentHitsWall(this.map, proj.x, proj.z, nx, nz, ny, this.doors)) return false;
       if (ny < mapGen.groundHeight(this.map, nx, nz, proj.y)) return false;
       if (ny > mapGen.ceilingHeight(this.map, nx, nz, proj.y - 0.5)) return false;
@@ -1268,6 +1425,7 @@ class Match {
     this.bbs.forEach((bb) => { if (bb.alive) this.moveBb(bb, dt); });
     this.moveProjectiles(dt);
     this.hazardTick(hazard, dt, now);
+    this.autoCollectResources();
     this.bbs = this.bbs.filter((bb) => bb.alive);
     this.broadcast();
   }
@@ -1300,6 +1458,8 @@ class Match {
           inv: p.inv,
           held: p.held,
           coins: p.coins,
+          wood: p.wood,
+          metal: p.metal,
           hp: Math.ceil(p.hp),
           maxHp: p.maxHp,
           def: round2(this.playerDefense(p)),
@@ -1321,7 +1481,12 @@ class Match {
       chestsOpen: [...this.chestsOpen],
       doors: this.doors.map((d) => [d.id, d.open ? 1 : 0, d.broken ? 1 : 0]),
       propsBroken: this.props.filter((p) => p.broken).map((p) => p.id),
-      lightsBroken: this.stoplights.filter((s) => s.broken).map((s) => s.id)
+      lightsBroken: this.stoplights.filter((s) => s.broken).map((s) => s.id),
+      treesBroken: this.map.trees.filter((t) => t.broken).map((t) => t.id),
+      rocksBroken: this.map.rocks.filter((r) => r.broken).map((r) => r.id),
+      carsBroken: this.map.cars.filter((c) => c.broken).map((c) => c.id),
+      lampsBroken: this.map.lamps.filter((l) => l.broken).map((l) => l.id),
+      blocks: this.map.blocks.map((block) => this.blockPayload(block))
     };
   }
 }

@@ -347,7 +347,8 @@
       stoplights: [],
       lamps: [],
       cars: [],
-      carBlocks: []
+      carBlocks: [],
+      blocks: []
     };
     const rand = mulberry32(map.seed);
     const occupied = [];
@@ -418,7 +419,7 @@
       if (h < 1.2) continue;
       if (map.id !== "island" && Math.hypot(x, z) < CONE_RADIUS * 0.75) continue;
       if (overlaps(occupied, x, z, 1.2)) continue;
-      const tree = { x, z, radius: 0.7, height: 4 + rand() * 4, kind: rand() < 0.35 ? "pine" : "round" };
+      const tree = { id: map.trees.length, x, z, radius: 0.7, height: 4 + rand() * 4, kind: rand() < 0.35 ? "pine" : "round" };
       map.trees.push(tree);
       occupied.push({ x, z, radius: 1.6 });
     }
@@ -431,7 +432,7 @@
       if (terrainHeight(map, x, z) < 0.6) continue;
       const radius = 0.8 + rand() * 1.4;
       if (overlaps(occupied, x, z, radius + 0.6)) continue;
-      map.rocks.push({ x, z, radius });
+      map.rocks.push({ id: map.rocks.length, x, z, radius });
       occupied.push({ x, z, radius: radius + 0.6 });
     }
 
@@ -571,10 +572,20 @@
     else pos.z = rect.z + halfD + radius;
   }
 
+  function blockGround(map, x, z, limit, best) {
+    if (!map.blocks) return best;
+    for (const block of map.blocks) {
+      if (Math.abs(x - block.x) >= block.w / 2 || Math.abs(z - block.z) >= block.d / 2) continue;
+      const top = block.y + block.h;
+      if (top <= limit && top > best) best = top;
+    }
+    return best;
+  }
+
   function groundHeight(map, x, z, feetY) {
     const terrain = terrainHeight(map, x, z);
     const b = buildingAt(map, x, z);
-    if (!b) return terrain;
+    if (!b) return blockGround(map, x, z, (feetY === undefined ? terrain : feetY) + STEP_UP, terrain);
     const limit = (feetY === undefined ? Math.max(terrain, b.floor) : feetY) + STEP_UP;
     let best = terrain;
     const consider = (y) => {
@@ -584,7 +595,7 @@
     b.slabs.forEach((s) => { if (inRect(s, x, z)) consider(s.y); });
     b.ramps.forEach((r) => { if (inRect(rampRect(r), x, z)) consider(rampSurface(r, x, z)); });
     consider(b.floor + b.h + 0.5);
-    return best;
+    return blockGround(map, x, z, limit, best);
   }
 
   function ceilingHeight(map, x, z, feetY) {
@@ -623,8 +634,14 @@
         });
       }
     }
+    for (const block of map.blocks || []) {
+      if (Math.abs(pos.x - block.x) > 3 || Math.abs(pos.z - block.z) > 3) continue;
+      if (feetY !== undefined && (feetY + STEP_UP >= block.y + block.h || feetY + PLAYER_HEIGHT < block.y)) continue;
+      pushOutOfRect(pos, block, radius);
+    }
     const pushRound = (list, pad) => {
       for (const item of list) {
+        if (item.broken) continue;
         const dx = pos.x - item.x;
         const dz = pos.z - item.z;
         if (Math.abs(dx) > 4 || Math.abs(dz) > 4) continue;
@@ -651,7 +668,7 @@
       const t = i / steps;
       const x = ax + (bx - ax) * t;
       const z = az + (bz - az) * t;
-      for (const wall of [...wallsNear(map, x, z), ...extra]) {
+      for (const wall of [...wallsNear(map, x, z), ...extra, ...(map.blocks || [])]) {
         if (y !== undefined && (y < wall.y || y > wall.y + wall.h)) continue;
         if (Math.abs(x - wall.x) <= wall.w / 2 && Math.abs(z - wall.z) <= wall.d / 2) return true;
       }

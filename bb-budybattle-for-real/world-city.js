@@ -206,7 +206,7 @@
         const off = road.width / 2 + 1.1;
         const x = p.x + f.nx * off * side;
         const z = p.z + f.nz * off * side;
-        lamps.push({ x, z, y: terrainHeight(map, x, z), yaw: Math.atan2(-f.nx * side, -f.nz * side) });
+        lamps.push({ id: lamps.length, x, z, y: terrainHeight(map, x, z), yaw: Math.atan2(-f.nx * side, -f.nz * side) });
         side = -side;
       });
       road.points.forEach((p, i) => {
@@ -218,12 +218,12 @@
         const x = p.x + f.nx * off * sgn;
         const z = p.z + f.nz * off * sgn;
         const yaw = Math.atan2(f.tx, f.tz) + (rand() < 0.5 ? 0 : Math.PI);
-        cars.push({ x, z, y: terrainHeight(map, x, z), yaw, color: CAR_COLORS[Math.floor(rand() * CAR_COLORS.length)] });
+        cars.push({ id: cars.length, x, z, y: terrainHeight(map, x, z), yaw, color: CAR_COLORS[Math.floor(rand() * CAR_COLORS.length)] });
       });
     });
     const carBlocks = [];
     cars.forEach((car) => {
-      [-1.15, 1.15].forEach((along) => carBlocks.push({ x: car.x + Math.sin(car.yaw) * along, z: car.z + Math.cos(car.yaw) * along, radius: 1 }));
+      [-1.15, 1.15].forEach((along) => carBlocks.push({ car: car.id, x: car.x + Math.sin(car.yaw) * along, z: car.z + Math.cos(car.yaw) * along, radius: 1 }));
     });
     return { stoplights, lamps, cars, carBlocks };
   }
