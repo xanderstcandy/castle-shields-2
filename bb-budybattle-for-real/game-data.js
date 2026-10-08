@@ -400,6 +400,15 @@ const BLOCK_SIZE = 2;
 const BLOCK_HEIGHT = 1.5;
 const RESOURCE_ITEMS = ["Wood", "Metal"];
 
+const VEHICLES = {
+  car: { label: "Car", cost: 15, hp: 75, speed: 2, seats: 1, drop: 15, radius: 1.1 },
+  truck: { label: "Truck", cost: 20, hp: 100, speed: 3, seats: 2, drop: 45, radius: 1.3 },
+  wartruck: { label: "War Truck", cost: 30, hp: 150, speed: 2.5, seats: 3, drop: 100, radius: 1.4 },
+  tank: { label: "Tank", cost: 75, hp: 250, speed: 1.75, seats: 5, drop: 250, radius: 1.6, gun: { damage: 30, cooldownMs: 900, speed: 90, range: 90 } }
+};
+const VEHICLE_KINDS = Object.keys(VEHICLES);
+const BUILD_OPTIONS = ["wood", "metal", ...VEHICLE_KINDS];
+
 function isResourceName(name) {
   return RESOURCE_ITEMS.includes(name);
 }
@@ -566,6 +575,9 @@ if (typeof module !== "undefined") {
     isPotionName,
     isWeaponSingleUse,
     BUILD_BLOCKS,
+    VEHICLES,
+    VEHICLE_KINDS,
+    BUILD_OPTIONS,
     BLOCK_SIZE,
     BLOCK_HEIGHT,
     RESOURCE_ITEMS,

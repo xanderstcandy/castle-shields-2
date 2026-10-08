@@ -381,7 +381,22 @@ const server = http.createServer((req, res) => {
   });
 });
 
-createMatchServer({ wss: new WebSocketServer({ server, path: "/ws" }), verifyAccount, awardStars });
+const coopStore = {
+  async find(usernameKey) {
+    await ensureStoreReady();
+    return store.find(usernameKey);
+  },
+  async list() {
+    await ensureStoreReady();
+    return store.list();
+  },
+  async saveCoop(usernameKey, friends, incoming) {
+    await ensureStoreReady();
+    return store.saveCoop(usernameKey, friends, incoming);
+  }
+};
+
+createMatchServer({ wss: new WebSocketServer({ server, path: "/ws" }), verifyAccount, awardStars, coopStore });
 
 ensureStoreReady()
   .then(() => applyWalletGrants())

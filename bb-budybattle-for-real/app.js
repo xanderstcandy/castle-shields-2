@@ -2273,14 +2273,14 @@ function renderCoopFriend() {
   const outgoing = state.coopOutgoing.map((row) => `
     <li class="coop-request coop-request--pending">
       <span class="coop-request-name">${escapeHtml(row.to)}</span>
-      <span class="coop-pending-label">Waiting…</span>
+      <span class="coop-pending-label">${row.online ? "Waiting…" : "Delivers when they sign in"}</span>
     </li>
   `).join("");
   renderScene(renderCard(`
     <header class="drop-head hub-head">
       <p class="drop-kicker">Co-op · <span>Friend</span></p>
       <h1 class="drop-title drop-title-compact">Invite a Buddy</h1>
-      <p class="drop-tagline">They must be signed in to the hub. Press Enter to send the request.</p>
+      <p class="drop-tagline">Press Enter to send the request. If they're offline, it waits and delivers next time they sign in.</p>
     </header>
     ${coopNoticeHtml()}
     <form class="drop-form coop-friend-form" data-form="coop-friend">
@@ -2302,10 +2302,11 @@ function renderCoopFriend() {
 function renderCoopFriends() {
   ensureCoopSocket();
   const squad = state.coopFriends.length
-    ? state.coopFriends.map((name) => `
-      <li class="coop-squad-member">
+    ? state.coopFriends.map((friend) => `
+      <li class="coop-squad-member${friend.online ? "" : " coop-squad-member--offline"}">
         <span class="coop-squad-badge" aria-hidden="true">${modeIcons.coop}</span>
-        <span class="coop-squad-name">${escapeHtml(name)}</span>
+        <span class="coop-squad-name">${escapeHtml(friend.name)}</span>
+        <span class="coop-squad-status">${friend.online ? "Online" : "Offline"}</span>
       </li>
     `).join("")
     : `<li class="coop-squad-empty">No squad yet. Tap <strong>Friend</strong> to invite someone who accepts your request.</li>`;

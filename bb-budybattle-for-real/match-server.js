@@ -85,6 +85,9 @@ const BB_KIND_CODE = { pet: 0, guard: 1, wild: 2 };
 const HARVEST_MIN_DAMAGE = 8;
 const BUILD_REACH = 2.2;
 const BUILD_COOLDOWN_MS = 200;
+const VEHICLE_SEAT_Y = 0.55;
+const VEHICLE_TURN_RATE = 7;
+const VEHICLE_MIN_DAMAGE = 8;
 const MAX_BLOCK_STACK = 14;
 const RESOURCE_COLLECT_RANGE = 1.6;
 const PROP_DROPS = {
@@ -173,6 +176,7 @@ class Match {
     this.players = [];
     this.bbs = [];
     this.projectiles = [];
+    this.vehicles = [];
     this.loot = new Map();
     this.chestsOpen = new Set();
     this.rocks = [];
@@ -269,7 +273,9 @@ class Match {
       input: { mx: 0, mz: 0, yaw: 0, pitch: 0, jump: false, attack: false, sprint: false },
       bot: ws ? null : { mode: "wander", goal: null, stuckAt: 0, lastPos: null, detourUntil: 0, detour: 0, thinkAt: 0, aimJitter: 0 },
       disconnectedAt: 0,
-      riding: 0
+      riding: 0,
+      vehicle: 0,
+      seat: 0
     };
     this.players.push(player);
     if (clean.bb) this.spawnBb(player, clean.bb);
@@ -351,11 +357,183 @@ class Match {
     return mount ? mount.height * RIDER_SEAT : 0;
   }
 
+  vehicleById(id) {
+    return this.vehicles.find((v) => v.id === id) || null;
+  }
+
+  vehicleOf(p) {
+    return p.vehicle ? this.vehicleById(p.vehicle) : null;
+  }
+
+  enterVehicle(p, v) {
+    const seat = v.seats.indexOf(0);
+    v.seats[seat] = p.id;
+    p.vehicle = v.id;
+    p.seat = seat;
+    p.vy = 0;
+    this.placeOccupant(p, v);
+    const spec = data.VEHICLES[v.kind];
+    if (p.ws) send(p.ws, { t: "notice", text: `${seat === 0 ? "Driving" : "Riding in"} the ${spec.label} — R to get out` });
+  }
+
+  exitVehicle(p, v) {
+    p.vehicle = 0;
+    if (!v) return;
+    v.seats[p.seat] = 0;
+    if (p.seat === 0) {
+      const next = v.seats.findIndex((id) => id);
+      if (next > 0) {
+        const promoted = this.playerById(v.seats[next]);
+        v.seats[0] = v.seats[next];
+        v.seats[next] = 0;
+        if (promoted) promoted.seat = 0;
+      }
+    }
+    const radius = data.VEHICLES[v.kind].radius + 0.9;
+    const pos = { x: v.x + Math.cos(v.yaw) * radius, z: v.z - Math.sin(v.yaw) * radius };
+    mapGen.resolveCollision(this.map, pos, PLAYER_RADIUS, v.y, this.doors);
+    p.x = pos.x;
+    p.z = pos.z;
+    p.y = mapGen.groundHeight(this.map, p.x, p.z, v.y + 0.5);
+    p.vy = 0;
+    p.seat = 0;
+  }
+
+  placeOccupant(p, v) {
+    p.x = v.x;
+    p.z = v.z;
+    p.y = v.y + VEHICLE_SEAT_Y;
+    p.vy = 0;
+    p.touchingWall = false;
+  }
+
+  buildVehicle(p, kind) {
+    const spec = data.VEHICLES[kind];
+    const notice = (text) => send(p.ws, { t: "notice", text });
+    const now = this.elapsed();
+    if (now - p.lastBuildAt < BUILD_COOLDOWN_MS) return;
+    if (p.metal < spec.cost) {
+      notice(`Need ${spec.cost} metal to build a ${spec.label} (you have ${p.metal})`);
+      return;
+    }
+    const dist = BUILD_REACH + spec.radius;
+    const x = p.x + Math.sin(p.yaw) * dist;
+    const z = p.z + Math.cos(p.yaw) * dist;
+    if (Math.abs(x) > mapGen.MAP_HALF - spec.radius || Math.abs(z) > mapGen.MAP_HALF - spec.radius) return;
+    const r = spec.radius;
+    if ([[0, 0], [r, 0], [-r, 0], [0, r], [0, -r]].some(([ox, oz]) => mapGen.buildingAt(this.map, x + ox, z + oz))
+      || mapGen.segmentHitsWall(this.map, p.x, p.z, x, z, p.y + 1, this.doors)) {
+      notice("Not enough room to build that here");
+      return;
+    }
+    p.metal -= spec.cost;
+    p.lastBuildAt = now;
+    const vehicle = {
+      id: this.nextId++,
+      kind,
+      owner: p.id,
+      x,
+      z,
+      y: mapGen.groundHeight(this.map, x, z, p.y + 0.5),
+      yaw: p.yaw,
+      aim: p.yaw,
+      hp: spec.hp,
+      maxHp: spec.hp,
+      seats: new Array(spec.seats).fill(0),
+      gunReadyAt: 0
+    };
+    this.vehicles.push(vehicle);
+    this.events.push({ k: "vehicle+", id: vehicle.id });
+    notice(`Built a ${spec.label}! Walk up and press R to get in`);
+  }
+
+  driveVehicle(p, v, mx, mz, dt) {
+    const spec = data.VEHICLES[v.kind];
+    if (mx || mz) {
+      const diff = angleDiff(Math.atan2(mx, mz), v.yaw);
+      const step = VEHICLE_TURN_RATE * dt;
+      v.yaw += Math.max(-step, Math.min(step, diff));
+    }
+    const speed = PLAYER_SPEED * spec.speed;
+    const pos = { x: v.x + mx * speed * dt, z: v.z + mz * speed * dt };
+    mapGen.resolveCollision(this.map, pos, Math.min(spec.radius, BB_MAX_COLLIDE), v.y, this.doors);
+    v.x = pos.x;
+    v.z = pos.z;
+    v.y = mapGen.groundHeight(this.map, v.x, v.z, v.y);
+  }
+
+  fireVehicleGun(p, v, now) {
+    const spec = data.VEHICLES[v.kind];
+    if (!spec.gun || now < v.gunReadyAt) return;
+    v.gunReadyAt = now + spec.gun.cooldownMs;
+    const yaw = p.input.yaw;
+    const pitch = p.input.pitch;
+    v.aim = yaw;
+    this.projectiles.push({
+      id: this.nextId++,
+      owner: p.id,
+      vehicle: v.id,
+      item: "Tank Gun",
+      damage: spec.gun.damage,
+      x: v.x + Math.sin(yaw) * (spec.radius + 0.6),
+      y: v.y + 1.6,
+      z: v.z + Math.cos(yaw) * (spec.radius + 0.6),
+      vx: Math.sin(yaw) * Math.cos(pitch) * spec.gun.speed,
+      vy: Math.sin(pitch) * spec.gun.speed,
+      vz: Math.cos(yaw) * Math.cos(pitch) * spec.gun.speed,
+      left: spec.gun.range
+    });
+    this.events.push({ k: "tankfire", id: v.id });
+  }
+
+  damageVehicle(v, amount, sourcePlayer) {
+    if (v.hp <= 0 || amount <= 0) return;
+    v.hp -= amount;
+    this.events.push({ k: "vhit", id: v.id });
+    if (v.hp > 0) return;
+    v.seats.forEach((id) => {
+      const occupant = id ? this.playerById(id) : null;
+      if (occupant && occupant.vehicle === v.id) this.exitVehicle(occupant, null);
+    });
+    v.seats.forEach((id, index) => {
+      const occupant = id ? this.playerById(id) : null;
+      if (!occupant) return;
+      const angle = (index / v.seats.length) * Math.PI * 2;
+      const pos = { x: v.x + Math.cos(angle) * 1.6, z: v.z + Math.sin(angle) * 1.6 };
+      mapGen.resolveCollision(this.map, pos, PLAYER_RADIUS, v.y, this.doors);
+      occupant.x = pos.x;
+      occupant.z = pos.z;
+      occupant.y = mapGen.groundHeight(this.map, pos.x, pos.z, v.y + 0.5);
+      occupant.seat = 0;
+    });
+    this.vehicles = this.vehicles.filter((entry) => entry !== v);
+    this.events.push({ k: "vboom", id: v.id, x: round2(v.x), y: round2(v.y), z: round2(v.z) });
+    this.dropResources(v.x, v.z, v.y, { metal: data.VEHICLES[v.kind].drop });
+    if (sourcePlayer && sourcePlayer.ws) send(sourcePlayer.ws, { t: "notice", text: `Destroyed a ${data.VEHICLES[v.kind].label}!` });
+  }
+
   toggleRide(p) {
     const notice = (text) => { if (p.ws) send(p.ws, { t: "notice", text }); };
+    const inVehicle = this.vehicleOf(p);
+    if (inVehicle) {
+      this.exitVehicle(p, inVehicle);
+      return;
+    }
     const current = p.riding ? this.bbById(p.riding) : null;
     if (current) {
       this.dismount(p, current);
+      return;
+    }
+    const nearVehicles = this.vehicles
+      .filter((v) => Math.abs(v.y - p.y) < 2.5 && Math.hypot(v.x - p.x, v.z - p.z) <= data.VEHICLES[v.kind].radius + RIDE_REACH)
+      .sort((a, b) => Math.hypot(a.x - p.x, a.z - p.z) - Math.hypot(b.x - p.x, b.z - p.z));
+    const open = nearVehicles.find((v) => v.seats.includes(0));
+    if (open) {
+      this.enterVehicle(p, open);
+      return;
+    }
+    if (nearVehicles.length) {
+      notice(`That ${data.VEHICLES[nearVehicles[0].kind].label} is full`);
       return;
     }
     const near = this.bbs
@@ -481,8 +659,13 @@ class Match {
   }
 
   build(p, mat) {
+    if (p.riding || p.vehicle) return;
+    if (data.VEHICLES[mat]) {
+      this.buildVehicle(p, mat);
+      return;
+    }
     const spec = data.BUILD_BLOCKS[mat];
-    if (!spec || p.riding) return;
+    if (!spec) return;
     const notice = (text) => send(p.ws, { t: "notice", text });
     const now = this.elapsed();
     if (now - p.lastBuildAt < BUILD_COOLDOWN_MS) return;
@@ -522,7 +705,8 @@ class Match {
     }
     const blocked = (ex, ez, ey, eh, r) => Math.abs(ex - x) < half + r && Math.abs(ez - z) < half + r && ey < y + height && ey + eh > y;
     if (this.players.some((other) => other.alive && blocked(other.x, other.z, other.y, mapGen.PLAYER_HEIGHT, PLAYER_RADIUS - 0.05))
-      || this.bbs.some((bb) => bb.alive && blocked(bb.x, bb.z, bb.y, bb.height, Math.min(bb.radius, BB_MAX_COLLIDE) - 0.05))) {
+      || this.bbs.some((bb) => bb.alive && blocked(bb.x, bb.z, bb.y, bb.height, Math.min(bb.radius, BB_MAX_COLLIDE) - 0.05))
+      || this.vehicles.some((v) => blocked(v.x, v.z, v.y, 2, data.VEHICLES[v.kind].radius - 0.05))) {
       notice("Something is in the way");
       return;
     }
@@ -578,7 +762,7 @@ class Match {
   }
 
   damagePlayer(target, amount, sourcePlayer, opts = {}) {
-    if (!target.alive || amount <= 0) return;
+    if (!target.alive || amount <= 0 || target.vehicle) return;
     if (sourcePlayer && this.elapsed() < SPAWN_PROTECT_MS) return;
     const defense = opts.ignoreDefense ? 0 : this.playerDefense(target);
     const dealt = Math.max(amount * 0.15, amount - defense);
@@ -654,6 +838,7 @@ class Match {
   eliminate(p, killer, cause) {
     if (!p.alive) return;
     const place = this.aliveCount();
+    if (p.vehicle) this.exitVehicle(p, this.vehicleOf(p));
     p.alive = false;
     p.place = place;
     p.inv.forEach((item) => { if (item) this.dropLoot(p.x, p.z, item, p.y); });
@@ -864,6 +1049,11 @@ class Match {
   }
 
   attack(p, now) {
+    const vehicle = this.vehicleOf(p);
+    if (vehicle) {
+      this.fireVehicleGun(p, vehicle, now);
+      return;
+    }
     const item = this.heldItem(p);
     if (item && data.isPotionName(item)) {
       if (now - p.lastAttackAt < 600) return;
@@ -912,9 +1102,13 @@ class Match {
     });
     const mySeat = this.seatHeight(p);
     this.players.forEach((target) => {
-      if (target === p || !target.alive) return;
+      if (target === p || !target.alive || target.vehicle) return;
       if (Math.abs(target.y - p.y) > 2.5 + Math.max(mySeat, this.seatHeight(target))) return;
       if (inFront(target.x, target.z, data.MELEE_RANGE)) this.applyWeaponHit(p, item, damage, target, null);
+    });
+    this.vehicles.forEach((v) => {
+      if (Math.abs(v.y - p.y) > 3) return;
+      if (inFront(v.x, v.z, data.MELEE_RANGE + data.VEHICLES[v.kind].radius)) this.damageVehicle(v, Math.max(VEHICLE_MIN_DAMAGE, damage), p);
     });
     this.bbs.forEach((bb) => {
       if (!bb.alive || bb.owner === p.id) return;
@@ -960,12 +1154,21 @@ class Match {
       mx /= len;
       mz /= len;
     }
+    const vehicle = this.vehicleOf(p);
+    if (vehicle) {
+      if (p.seat === 0) this.driveVehicle(p, vehicle, mx, mz, dt);
+      else vehicle.aim = p.input.yaw;
+      this.placeOccupant(p, vehicle);
+      return;
+    }
+    if (p.vehicle) p.vehicle = 0;
     const mount = p.riding ? this.bbById(p.riding) : null;
     if (mount) {
       this.moveMount(p, mount, mx, mz, dt);
       return;
     }
     if (p.riding) p.riding = 0;
+    const before = { x: p.x, z: p.z };
     const sprintHeld = !stunned && input.sprint && len > 0;
     if (sprintHeld && now >= p.sprintCooldownUntil && !p.sprintActiveUntil) p.sprintActiveUntil = now + SPRINT_DURATION_MS;
     if (!sprintHeld && p.sprintActiveUntil && now < p.sprintActiveUntil) {
@@ -1172,6 +1375,10 @@ class Match {
       const hit = inHazard(bb.x, bb.z, bb.y, false);
       if (hit) this.damageBb(bb, hit.dps * dt, null, { ignoreDefense: true });
     });
+    [...this.vehicles].forEach((v) => {
+      const hit = inHazard(v.x, v.z, v.y, false);
+      if (hit) this.damageVehicle(v, hit.dps * dt, null);
+    });
 
     if (!mapGen.HAZARDS[this.mapId].rocks || now < mapGen.HAZARDS[this.mapId].graceMs) return;
     if (now >= this.nextRockAt) {
@@ -1203,6 +1410,9 @@ class Match {
           this.damageBb(bb, mapGen.ROCK_DAMAGE, null, { ignoreDefense: true });
         }
       });
+      [...this.vehicles].forEach((v) => {
+        if (Math.hypot(v.x - rock.x, v.z - rock.z) <= mapGen.ROCK_RADIUS + data.VEHICLES[v.kind].radius) this.damageVehicle(v, mapGen.ROCK_DAMAGE, null);
+      });
       return false;
     });
   }
@@ -1224,16 +1434,31 @@ class Match {
       if (mapGen.segmentHitsWall(this.map, proj.x, proj.z, nx, nz, ny, this.doors)) return false;
       if (ny < mapGen.groundHeight(this.map, nx, nz, proj.y)) return false;
       if (ny > mapGen.ceilingHeight(this.map, nx, nz, proj.y - 0.5)) return false;
+      const stepLenSq = stepX * stepX + stepZ * stepZ;
+      const closest = (px, pz) => {
+        const t = stepLenSq > 0 ? Math.max(0, Math.min(1, ((px - proj.x) * stepX + (pz - proj.z) * stepZ) / stepLenSq)) : 1;
+        return { d: Math.hypot(px - (proj.x + stepX * t), pz - (proj.z + stepZ * t)), y: proj.y + stepY * t };
+      };
+      for (const v of this.vehicles) {
+        if (v.id === proj.vehicle) continue;
+        const hit = closest(v.x, v.z);
+        if (hit.d < data.VEHICLES[v.kind].radius + 0.3 && hit.y > v.y - 0.2 && hit.y < v.y + 2.2) {
+          this.damageVehicle(v, proj.damage, owner);
+          return false;
+        }
+      }
       for (const target of this.players) {
-        if (!target.alive || target.id === proj.owner) continue;
-        if (Math.hypot(target.x - nx, target.z - nz) < 0.9 && ny > target.y - 0.2 && ny < target.y + 2.2) {
+        if (!target.alive || target.id === proj.owner || target.vehicle) continue;
+        const hit = closest(target.x, target.z);
+        if (hit.d < 0.9 && hit.y > target.y - 0.2 && hit.y < target.y + 2.2) {
           if (owner) this.applyWeaponHit(owner, proj.item, proj.damage, target, null);
           return false;
         }
       }
       for (const bb of this.bbs) {
         if (!bb.alive || bb.owner === proj.owner) continue;
-        if (Math.hypot(bb.x - nx, bb.z - nz) < 0.5 + bb.radius && ny > bb.y - 0.2 && ny < bb.y + bb.height) {
+        const hit = closest(bb.x, bb.z);
+        if (hit.d < 0.5 + bb.radius && hit.y > bb.y - 0.2 && hit.y < bb.y + bb.height) {
           if (owner) this.applyWeaponHit(owner, proj.item, proj.damage, null, bb);
           return false;
         }
@@ -1441,6 +1666,12 @@ class Match {
       this.movePlayer(p, dt, now);
       if (p.input.attack && now >= p.stunUntil) this.attack(p, now);
     });
+    this.vehicles.forEach((v) => {
+      v.seats.forEach((id) => {
+        const occupant = id ? this.playerById(id) : null;
+        if (occupant && occupant.vehicle === v.id) this.placeOccupant(occupant, v);
+      });
+    });
     this.bbs.forEach((bb) => { if (bb.alive) this.moveBb(bb, dt); });
     this.moveProjectiles(dt);
     this.hazardTick(hazard, dt, now);
@@ -1453,7 +1684,11 @@ class Match {
     const now = this.elapsed();
     const players = this.players.filter((p) => p.alive).map((p) => [
       p.id, round2(p.x), round2(p.y), round2(p.z), round2(p.yaw), Math.ceil(p.hp), p.maxHp,
-      this.heldItem(p) || "", now < p.stunUntil ? 1 : 0, now < p.swingUntil ? 1 : 0, p.riding || 0
+      this.heldItem(p) || "", now < p.stunUntil ? 1 : 0, now < p.swingUntil ? 1 : 0, p.riding || 0, p.vehicle || 0, p.seat || 0
+    ]);
+    const vehicles = this.vehicles.map((v) => [
+      v.id, data.VEHICLE_KINDS.indexOf(v.kind), round2(v.x), round2(v.y), round2(v.z), round2(v.yaw), Math.ceil(v.hp), v.maxHp, round2(v.aim),
+      v.seats.filter(Boolean).length
     ]);
     const bbs = this.bbs.map((bb) => [bb.id, bb.owner, bb.catalogIndex, round2(bb.x), round2(bb.y), round2(bb.z), Math.ceil(bb.hp), bb.maxHp, bb.rider || 0, round2(bb.yaw), BB_KIND_CODE[bb.kind]]);
     const proj = this.projectiles.map((pr) => [pr.id, round2(pr.x), round2(pr.y), round2(pr.z)]);
@@ -1470,6 +1705,7 @@ class Match {
         alive,
         players,
         bbs,
+        vehicles,
         proj,
         rocks,
         ev: events,
@@ -1488,7 +1724,11 @@ class Match {
           stunMs: Math.max(0, p.stunUntil - now),
           protectMs: Math.max(0, SPAWN_PROTECT_MS - now),
           kills: p.kills,
-          bbs: myBbs
+          bbs: myBbs,
+          veh: (() => {
+            const v = this.vehicleOf(p);
+            return v ? [v.kind, Math.ceil(v.hp), v.maxHp, p.seat, data.VEHICLES[v.kind].gun ? Math.max(0, v.gunReadyAt - now) : -1] : null;
+          })()
         }
       });
     });
@@ -1510,7 +1750,7 @@ class Match {
   }
 }
 
-function createMatchServer({ wss, verifyAccount, awardStars }) {
+function createMatchServer({ wss, verifyAccount, awardStars, coopStore }) {
   const queues = new Map();
   const matches = new Set();
   let matchCounter = 1;
@@ -1530,39 +1770,57 @@ function createMatchServer({ wss, verifyAccount, awardStars }) {
   }
 
   const onlineByKey = new Map();
-  const coopFriends = new Map();
-  const coopPending = new Map();
+  let coopChain = Promise.resolve();
 
   function coopUserKey(name) {
     return String(name || "").trim().toLowerCase();
   }
 
-  function coopSnapshot(conn) {
-    const key = coopUserKey(conn.username);
-    const friendKeys = coopFriends.get(key) || new Set();
-    const friends = [...friendKeys]
-      .map((entryKey) => onlineByKey.get(entryKey))
-      .filter(Boolean)
-      .map((entry) => entry.username);
-    const incoming = [];
-    const outgoing = [];
-    coopPending.forEach((req) => {
-      if (req.toKey === key) incoming.push({ from: req.fromName });
-      if (req.fromKey === key) outgoing.push({ to: req.toName });
+  function coopTask(conn, task) {
+    coopChain = coopChain.then(task).catch((error) => {
+      console.error("co-op update failed:", error);
+      if (conn) send(conn.ws, { t: "coop-notice", text: "Co-op is having trouble right now. Try again." });
     });
+    return coopChain;
+  }
+
+  function hasName(list, name) {
+    const key = coopUserKey(name);
+    return list.some((entry) => coopUserKey(entry) === key);
+  }
+
+  function withoutName(list, name) {
+    const key = coopUserKey(name);
+    return list.filter((entry) => coopUserKey(entry) !== key);
+  }
+
+  async function coopSnapshot(conn) {
+    const key = coopUserKey(conn.username);
+    const me = await coopStore.find(key);
+    if (!me) return { friends: [], incoming: [], outgoing: [] };
+    const friends = me.coopFriends.map((name) => ({ name, online: onlineByKey.has(coopUserKey(name)) }));
+    const incoming = me.coopIncoming.map((from) => ({ from, online: onlineByKey.has(coopUserKey(from)) }));
+    const outgoing = (await coopStore.list())
+      .filter((account) => hasName(account.coopIncoming, me.username))
+      .map((account) => ({ to: account.username, online: onlineByKey.has(coopUserKey(account.username)) }));
     return { friends, incoming, outgoing };
   }
 
-  function pushCoop(conn) {
-    if (!conn.username) return;
-    send(conn.ws, { t: "coop", ...coopSnapshot(conn) });
+  async function pushCoop(conn) {
+    if (!conn || !conn.username) return;
+    send(conn.ws, { t: "coop", ...(await coopSnapshot(conn)) });
   }
 
-  function pushCoopPair(aKey, bKey) {
-    const a = onlineByKey.get(aKey);
-    const b = onlineByKey.get(bKey);
-    if (a) pushCoop(a);
-    if (b) pushCoop(b);
+  async function pushCoopKeys(keys) {
+    for (const key of new Set(keys)) await pushCoop(onlineByKey.get(key));
+  }
+
+  async function pushToFriendsOf(username) {
+    const me = await coopStore.find(coopUserKey(username));
+    if (!me) return;
+    const related = [...me.coopFriends, ...me.coopIncoming].map(coopUserKey);
+    const outgoing = (await coopStore.list()).filter((account) => hasName(account.coopIncoming, me.username)).map((account) => coopUserKey(account.username));
+    await pushCoopKeys([...related, ...outgoing]);
   }
 
   function registerOnline(conn) {
@@ -1570,16 +1828,32 @@ function createMatchServer({ wss, verifyAccount, awardStars }) {
     const previous = onlineByKey.get(key);
     if (previous && previous !== conn && previous.ws.readyState === 1) previous.ws.close();
     onlineByKey.set(key, conn);
-    pushCoop(conn);
+    coopTask(conn, async () => {
+      await pushCoop(conn);
+      const me = await coopStore.find(key);
+      if (me && me.coopIncoming.length) {
+        const names = me.coopIncoming.join(", ");
+        send(conn.ws, { t: "coop-notice", text: `Friend request${me.coopIncoming.length > 1 ? "s" : ""} waiting from ${names}. Accept on the Friend screen.` });
+      }
+      await pushToFriendsOf(conn.username);
+    });
   }
 
   function unregisterOnline(conn) {
     if (!conn.username) return;
     const key = coopUserKey(conn.username);
-    if (onlineByKey.get(key) === conn) onlineByKey.delete(key);
-    [...coopPending.entries()].forEach(([id, req]) => {
-      if (req.fromKey === key || req.toKey === key) coopPending.delete(id);
-    });
+    if (onlineByKey.get(key) !== conn) return;
+    onlineByKey.delete(key);
+    coopTask(null, () => pushToFriendsOf(conn.username));
+  }
+
+  async function makeFriends(me, other) {
+    await coopStore.saveCoop(coopUserKey(me.username), [...withoutName(me.coopFriends, other.username), other.username], withoutName(me.coopIncoming, other.username));
+    await coopStore.saveCoop(coopUserKey(other.username), [...withoutName(other.coopFriends, me.username), me.username], withoutName(other.coopIncoming, me.username));
+    await pushCoopKeys([coopUserKey(me.username), coopUserKey(other.username)]);
+    const otherConn = onlineByKey.get(coopUserKey(other.username));
+    if (otherConn) send(otherConn.ws, { t: "coop-notice", text: `${me.username} joined your co-op squad!` });
+    send(onlineByKey.get(coopUserKey(me.username))?.ws, { t: "coop-notice", text: `${other.username} is on your squad.` });
   }
 
   function handleFriendRequest(conn, toName) {
@@ -1594,45 +1868,50 @@ function createMatchServer({ wss, verifyAccount, awardStars }) {
       send(conn.ws, { t: "coop-notice", text: "You can't send a request to yourself." });
       return;
     }
-    if (coopFriends.get(fromKey)?.has(toKey)) {
-      send(conn.ws, { t: "coop-notice", text: `${to} is already on your co-op squad.` });
-      return;
-    }
-    const target = onlineByKey.get(toKey);
-    if (!target) {
-      send(conn.ws, { t: "coop-notice", text: `${to} isn't online in the hub right now.` });
-      return;
-    }
-    const pendingId = `${fromKey}:${toKey}`;
-    if (coopPending.has(pendingId)) {
-      send(conn.ws, { t: "coop-notice", text: `Request to ${to} is already waiting.` });
-      return;
-    }
-    coopPending.set(pendingId, { fromKey, fromName: conn.username, toKey, toName: target.username });
-    pushCoop(conn);
-    pushCoop(target);
-    send(conn.ws, { t: "coop-notice", text: `Friend request sent to ${target.username}.` });
-    send(target.ws, { t: "coop-notice", text: `${conn.username} wants to co-op. Accept on the Friend screen.` });
+    coopTask(conn, async () => {
+      const [me, target] = await Promise.all([coopStore.find(fromKey), coopStore.find(toKey)]);
+      if (!me) return;
+      if (!target) {
+        send(conn.ws, { t: "coop-notice", text: `No account named ${to}.` });
+        return;
+      }
+      if (hasName(me.coopFriends, target.username)) {
+        send(conn.ws, { t: "coop-notice", text: `${target.username} is already on your co-op squad.` });
+        return;
+      }
+      if (hasName(me.coopIncoming, target.username)) {
+        await makeFriends(me, target);
+        return;
+      }
+      if (hasName(target.coopIncoming, me.username)) {
+        send(conn.ws, { t: "coop-notice", text: `Request to ${target.username} is already waiting.` });
+        return;
+      }
+      await coopStore.saveCoop(toKey, target.coopFriends, [...target.coopIncoming, me.username]);
+      const targetConn = onlineByKey.get(toKey);
+      await pushCoopKeys([fromKey, toKey]);
+      if (targetConn) {
+        send(conn.ws, { t: "coop-notice", text: `Friend request sent to ${target.username}.` });
+        send(targetConn.ws, { t: "coop-notice", text: `${me.username} wants to co-op. Accept on the Friend screen.` });
+      } else {
+        send(conn.ws, { t: "coop-notice", text: `${target.username} is offline. They'll get your request next time they sign in.` });
+      }
+    });
   }
 
   function handleFriendAccept(conn, fromName) {
     const fromKey = coopUserKey(fromName);
     const toKey = coopUserKey(conn.username);
-    const pendingId = `${fromKey}:${toKey}`;
-    const req = coopPending.get(pendingId);
-    if (!req) {
-      send(conn.ws, { t: "coop-notice", text: "That request is no longer pending." });
-      return;
-    }
-    coopPending.delete(pendingId);
-    if (!coopFriends.has(fromKey)) coopFriends.set(fromKey, new Set());
-    if (!coopFriends.has(toKey)) coopFriends.set(toKey, new Set());
-    coopFriends.get(fromKey).add(toKey);
-    coopFriends.get(toKey).add(fromKey);
-    pushCoopPair(fromKey, toKey);
-    const fromConn = onlineByKey.get(fromKey);
-    if (fromConn) send(fromConn.ws, { t: "coop-notice", text: `${conn.username} joined your co-op squad!` });
-    send(conn.ws, { t: "coop-notice", text: `${req.fromName} is on your squad.` });
+    coopTask(conn, async () => {
+      const [me, from] = await Promise.all([coopStore.find(toKey), coopStore.find(fromKey)]);
+      if (!me || !from || !hasName(me.coopIncoming, from.username)) {
+        send(conn.ws, { t: "coop-notice", text: "That request is no longer pending." });
+        if (me && !from) await coopStore.saveCoop(toKey, me.coopFriends, withoutName(me.coopIncoming, fromName));
+        await pushCoop(conn);
+        return;
+      }
+      await makeFriends(me, from);
+    });
   }
 
   function joinQueue(conn, mode, map) {

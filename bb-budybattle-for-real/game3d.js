@@ -1458,7 +1458,7 @@ function renderHudShell(root) {
     <div class="mh-toast" data-hud-toast></div>
     <div class="mh-prompt" data-hud-prompt></div>
     <div class="mh-hotbar" data-hud-hotbar></div>
-    <div class="mh-help">WASD / arrows move · mouse aims · click attack · Space jump · 1-8 or wheel switch · Enter door / pick up · Backspace drop · Q shop · E build · F wood/metal · R ride big B.B.s · right-drag turn camera · Z scope</div>
+    <div class="mh-help">WASD / arrows move · mouse aims · click attack · Space jump · 1-8 or wheel switch · Enter door / pick up · Backspace drop · Shift sprint · Q shop · E build · F switch block/vehicle · R ride B.B.s / get in vehicles · right-drag turn camera · Z scope</div>
     </div>
     <div class="mh-shop" data-hud-shop hidden></div>
   `);
@@ -1551,6 +1551,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     snaps: [],
     players: new Map(),
     bbs: new Map(),
+    vehicles: new Map(),
     projectiles: new Map(),
     loot: new Map(),
     blocks: new Map(),
@@ -1786,6 +1787,93 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     return entry;
   }
 
+  const VEHICLE_SEATS = {
+    car: [[0, 0.75, -0.1]],
+    truck: [[-0.4, 0.95, 0.55], [0.4, 0.95, 0.55]],
+    wartruck: [[-0.4, 1.0, 0.6], [0.4, 1.0, 0.6], [0, 1.3, -1.0]],
+    tank: [[0, 1.75, 0], [-0.9, 1.3, -1.2], [0.9, 1.3, -1.2], [-0.9, 1.3, 1.2], [0.9, 1.3, 1.2]]
+  };
+
+  function buildVehicleModel(kind) {
+    const group = new THREE.Group();
+    const materials = [];
+    const mat = (color) => {
+      const material = new THREE.MeshLambertMaterial({ color });
+      materials.push(material);
+      return material;
+    };
+    const box = (w, h, d, color, x, y, z, parent = group) => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(color));
+      mesh.position.set(x, y, z);
+      mesh.castShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+    const wheel = (r, w, x, y, z, color = 0x111827) => {
+      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(r, r, w, 14), mat(color));
+      mesh.rotation.z = Math.PI / 2;
+      mesh.position.set(x, y, z);
+      group.add(mesh);
+      return mesh;
+    };
+    const glass = 0x93c5fd;
+    let turret = null;
+    if (kind === "car") {
+      box(1.6, 0.55, 3, 0xdc2626, 0, 0.55, 0);
+      box(1.4, 0.5, 1.5, 0xb91c1c, 0, 1.08, -0.15);
+      box(1.42, 0.38, 0.05, glass, 0, 1.08, 0.62);
+      box(0.3, 0.15, 0.05, 0xfef08a, -0.55, 0.62, 1.52);
+      box(0.3, 0.15, 0.05, 0xfef08a, 0.55, 0.62, 1.52);
+      [[-0.85, 1], [0.85, 1], [-0.85, -1], [0.85, -1]].forEach(([x, z]) => wheel(0.35, 0.25, x, 0.35, z));
+    } else if (kind === "truck") {
+      box(2, 0.6, 4, 0x2563eb, 0, 0.75, 0);
+      box(1.9, 0.9, 1.5, 0x1d4ed8, 0, 1.45, 1.1);
+      box(1.92, 0.5, 0.05, glass, 0, 1.55, 1.86);
+      box(2, 0.45, 0.1, 0x1e3a8a, 0, 1.25, -1.95);
+      box(0.1, 0.45, 2.4, 0x1e3a8a, -0.95, 1.25, -0.75);
+      box(0.1, 0.45, 2.4, 0x1e3a8a, 0.95, 1.25, -0.75);
+      [[-1.05, 1.3], [1.05, 1.3], [-1.05, -1.3], [1.05, -1.3]].forEach(([x, z]) => wheel(0.45, 0.3, x, 0.45, z));
+    } else if (kind === "wartruck") {
+      box(2.2, 0.8, 4.4, 0x4d5d2a, 0, 0.9, 0);
+      box(2.1, 1, 1.7, 0x3f4f22, 0, 1.75, 1.15);
+      box(1.6, 0.18, 0.05, 0x1f2937, 0, 1.9, 2.01);
+      box(2.2, 0.6, 2.5, 0x3f4f22, 0, 1.6, -0.9);
+      box(2.3, 0.2, 0.3, 0x27272a, 0, 0.75, 2.25);
+      [[-1.15, 1.5], [1.15, 1.5], [-1.15, 0], [1.15, 0], [-1.15, -1.5], [1.15, -1.5]].forEach(([x, z]) => wheel(0.5, 0.35, x, 0.5, z));
+    } else {
+      box(2.8, 0.9, 4.4, 0x556b2f, 0, 0.85, 0);
+      box(0.6, 0.8, 4.6, 0x1f2937, -1.5, 0.45, 0);
+      box(0.6, 0.8, 4.6, 0x1f2937, 1.5, 0.45, 0);
+      [-1.6, -0.55, 0.55, 1.6].forEach((z) => {
+        wheel(0.32, 0.62, -1.5, 0.38, z, 0x374151);
+        wheel(0.32, 0.62, 1.5, 0.38, z, 0x374151);
+      });
+      turret = new THREE.Group();
+      turret.position.set(0, 1.3, 0);
+      group.add(turret);
+      box(1.8, 0.7, 2, 0x4b5d27, 0, 0.35, 0, turret);
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 2.6, 10), mat(0x27272a));
+      barrel.rotation.x = Math.PI / 2;
+      barrel.position.set(0, 0.4, 2.2);
+      turret.add(barrel);
+    }
+    return { group, materials, turret };
+  }
+
+  function ensureVehicle(id, kindIndex) {
+    let entry = g.vehicles.get(id);
+    if (!entry) {
+      const kind = VEHICLE_KINDS[kindIndex] || "car";
+      const model = buildVehicleModel(kind);
+      const group = new THREE.Group();
+      group.add(model.group);
+      scene.add(group);
+      entry = { group, model, kind, spec: VEHICLES[kind], flashUntil: 0, flashing: false, occupants: 0 };
+      g.vehicles.set(id, entry);
+    }
+    return entry;
+  }
+
   function applyEvents(events) {
     events.forEach((ev) => {
       if (ev.k === "loot+") addLoot(ev);
@@ -1855,6 +1943,17 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
         if (mesh) tintBlock(mesh, ev.hp);
       } else if (ev.k === "block-") {
         removeBlock(ev.id, true);
+      } else if (ev.k === "vhit") {
+        const v = g.vehicles.get(ev.id);
+        if (v) v.flashUntil = performance.now() + 140;
+      } else if (ev.k === "tankfire") {
+        const v = g.vehicles.get(ev.id);
+        if (v) spawnPoof(v.group.position.x, v.group.position.y + 1.6, v.group.position.z, 0xfde68a, 0.8);
+      } else if (ev.k === "vboom") {
+        spawnPoof(ev.x, ev.y + 1, ev.z, 0xf97316, 3);
+        spawnPoof(ev.x, ev.y + 1.5, ev.z, 0x9ca3af, 3.5);
+        const self = g.players.get(g.myId);
+        if (self && self.group.position.distanceTo(new THREE.Vector3(ev.x, ev.y, ev.z)) < 20) g.shake = 0.5;
       }
     });
   }
@@ -1947,7 +2046,8 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     } else if (msg.t === "snap") {
       const players = new Map(msg.players.map((row) => [row[0], row]));
       const bbs = new Map(msg.bbs.map((row) => [row[0], row]));
-      g.snaps.push({ time: performance.now(), players, bbs, proj: msg.proj, rocks: msg.rocks });
+      const vehicles = new Map((msg.vehicles || []).map((row) => [row[0], row]));
+      g.snaps.push({ time: performance.now(), players, bbs, vehicles, proj: msg.proj, rocks: msg.rocks });
       if (g.snaps.length > 6) g.snaps.shift();
       g.serverElapsed = msg.e;
       g.serverElapsedAt = performance.now();
@@ -1980,11 +2080,17 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     hud("alive").textContent = `${g.alive} alive`;
     hud("kills").textContent = `${me.kills} KO`;
     hud("coins").innerHTML = `${shopCoinSvg()} ${me.coins}`;
-    const matsKey = `${me.wood}|${me.metal}|${g.buildMat}`;
+    const veh = me.veh;
+    const matsKey = `${me.wood}|${me.metal}|${g.buildMat}|${veh ? veh.join(",") : ""}`;
     if (matsKey !== g.matsKey) {
       g.matsKey = matsKey;
       const chip = (mat, label, count) => `<span class="mh-mat${g.buildMat === mat ? " mh-mat--active" : ""}">${label} ${count}</span>`;
-      hud("mats").innerHTML = `${chip("wood", "🪵", me.wood)} ${chip("metal", "🔩", me.metal)} <span class="mh-mat-hint">E build</span>`;
+      const vehicle = VEHICLES[g.buildMat];
+      const vehicleChip = vehicle ? ` <span class="mh-mat mh-mat--active">🚗 ${vehicle.label} (${vehicle.cost} 🔩)</span>` : "";
+      const insideChip = veh
+        ? ` <span class="mh-mat mh-mat--vehicle">${VEHICLES[veh[0]].label} ${veh[1]}/${veh[2]} HP${veh[3] === 0 ? " · driving" : ""}${veh[4] >= 0 ? (veh[4] > 0 ? " · reloading" : " · gun ready") : ""}</span>`
+        : "";
+      hud("mats").innerHTML = `${chip("wood", "🪵", me.wood)} ${chip("metal", "🔩", me.metal)}${vehicleChip}${insideChip} <span class="mh-mat-hint">E build · F switch</span>`;
     }
 
     const hotbarKey = JSON.stringify([me.inv, me.held]);
@@ -2106,16 +2212,24 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     if (code === "KeyB") return;
     if (code === "KeyE") {
       if (!g.shopOpen && g.me) {
-        const other = g.buildMat === "wood" ? "metal" : "wood";
-        const mat = g.me[g.buildMat] < BUILD_BLOCKS[g.buildMat].cost && g.me[other] >= BUILD_BLOCKS[other].cost ? other : g.buildMat;
+        let mat = g.buildMat;
+        if (BUILD_BLOCKS[mat]) {
+          const other = mat === "wood" ? "metal" : "wood";
+          if (g.me[mat] < BUILD_BLOCKS[mat].cost && g.me[other] >= BUILD_BLOCKS[other].cost) mat = other;
+        }
         sendMsg({ t: "build", mat });
       }
       return;
     }
     if (code === "KeyF") {
-      g.buildMat = g.buildMat === "wood" ? "metal" : "wood";
-      const spec = BUILD_BLOCKS[g.buildMat];
-      toast(`Building with ${spec.item.toLowerCase()} (${spec.cost} per block, ${spec.hp} HP)`, 1400);
+      g.buildMat = BUILD_OPTIONS[(BUILD_OPTIONS.indexOf(g.buildMat) + 1) % BUILD_OPTIONS.length];
+      const vehicle = VEHICLES[g.buildMat];
+      if (vehicle) {
+        toast(`Building a ${vehicle.label}: ${vehicle.cost} metal · ${vehicle.hp} HP · ${vehicle.seats} seat${vehicle.seats > 1 ? "s" : ""} · ${vehicle.speed}× speed${vehicle.gun ? ` · ${vehicle.gun.damage} dmg gun` : ""}`, 1800);
+      } else {
+        const spec = BUILD_BLOCKS[g.buildMat];
+        toast(`Building with ${spec.item.toLowerCase()} (${spec.cost} per block, ${spec.hp} HP)`, 1400);
+      }
       updateHud();
       return;
     }
@@ -2258,6 +2372,28 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     const { older, newer, t } = frame;
     const latest = g.snaps[g.snaps.length - 1];
 
+    g.vehicles.forEach((entry, id) => {
+      if (!latest.vehicles.has(id)) {
+        scene.remove(entry.group);
+        entry.model.materials.forEach((material) => material.dispose());
+        g.vehicles.delete(id);
+      }
+    });
+    latest.vehicles.forEach((row, id) => {
+      const entry = ensureVehicle(id, row[1]);
+      const a = older.vehicles.get(id) || row;
+      const b = newer.vehicles.get(id) || row;
+      entry.group.position.set(a[2] + (b[2] - a[2]) * t, a[3] + (b[3] - a[3]) * t, a[4] + (b[4] - a[4]) * t);
+      entry.model.group.rotation.y = lerpAngle(a[5], b[5], t);
+      if (entry.model.turret) entry.model.turret.rotation.y = lerpAngle(a[8], b[8], t) - entry.model.group.rotation.y;
+      entry.occupants = row[9] || 0;
+      const flash = now < entry.flashUntil;
+      if (flash !== entry.flashing) {
+        entry.flashing = flash;
+        entry.model.materials.forEach((material) => material.emissive.setHex(flash ? 0x991b1b : 0x000000));
+      }
+    });
+
     g.players.forEach((entry, id) => {
       if (!latest.players.has(id)) {
         scene.remove(entry.group);
@@ -2286,10 +2422,13 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       entry.lastPos.copy(entry.group.position);
       const speed = dt > 0 ? moved / dt : 0;
       entry.mountId = row[10] || 0;
-      entry.walk += entry.mountId ? 0 : speed * dt * 2.2;
-      const swing = speed > 0.5 && !entry.mountId ? Math.sin(entry.walk) * 0.7 : 0;
-      entry.legs[0].rotation.x = entry.mountId ? -1.45 : swing;
-      entry.legs[1].rotation.x = entry.mountId ? -1.45 : -swing;
+      entry.vehicleId = row[11] || 0;
+      entry.seat = row[12] || 0;
+      const seated = entry.mountId || entry.vehicleId;
+      entry.walk += seated ? 0 : speed * dt * 2.2;
+      const swing = speed > 0.5 && !seated ? Math.sin(entry.walk) * 0.7 : 0;
+      entry.legs[0].rotation.x = seated ? -1.45 : swing;
+      entry.legs[1].rotation.x = seated ? -1.45 : -swing;
       const heldName = row[7];
       if (entry.heldName !== heldName) {
         entry.heldName = heldName;
@@ -2337,6 +2476,21 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     });
 
     g.players.forEach((entry) => {
+      const vehicle = entry.vehicleId ? g.vehicles.get(entry.vehicleId) : null;
+      if (vehicle) {
+        const seats = VEHICLE_SEATS[vehicle.kind];
+        const [seatX, seatY, seatZ] = seats[entry.seat] || seats[0];
+        const yaw = vehicle.model.group.rotation.y;
+        const cos = Math.cos(yaw);
+        const sin = Math.sin(yaw);
+        entry.group.position.set(
+          vehicle.group.position.x + seatX * cos + seatZ * sin,
+          vehicle.group.position.y + seatY - RIDER_HIP,
+          vehicle.group.position.z - seatX * sin + seatZ * cos
+        );
+        if (entry.seat === 0 || entry !== g.players.get(g.myId)) entry.group.rotation.y = yaw;
+        return;
+      }
       const mount = entry.mountId ? g.bbs.get(entry.mountId) : null;
       if (!mount) return;
       const [seatX, seatY, seatZ] = mount.model.seat;
@@ -2467,8 +2621,22 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       }
     });
     let rideText = "";
-    if (self && self.mountId) rideText = "R: hop off";
+    if (self && self.vehicleId) {
+      const vehicle = g.vehicles.get(self.vehicleId);
+      rideText = vehicle && vehicle.spec.gun ? "R: get out · Click: fire tank gun" : "R: get out";
+    } else if (self && self.mountId) rideText = "R: hop off";
     else if (self) {
+      let nearVehicle = Infinity;
+      g.vehicles.forEach((v) => {
+        if (Math.abs(v.group.position.y - self.group.position.y) >= 2.5) return;
+        const d = Math.hypot(v.group.position.x - self.group.position.x, v.group.position.z - self.group.position.z);
+        if (d <= v.spec.radius + RIDE_REACH && d < nearVehicle) {
+          nearVehicle = d;
+          rideText = v.occupants >= v.spec.seats ? `${v.spec.label} is full` : `R: get in ${v.spec.label} (${v.occupants}/${v.spec.seats})`;
+        }
+      });
+    }
+    if (self && !rideText) {
       let best = Infinity;
       g.bbs.forEach((bb) => {
         if (bb.owner !== g.myId || !bbIsRideable(bb.def)) return;
@@ -2581,7 +2749,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       sideZ * panSide + Math.cos(g.camYaw) * panForward
     ));
     const mount = self.mountId ? g.bbs.get(self.mountId) : null;
-    const rideBoost = mount ? mount.model.height : 0;
+    const rideBoost = mount ? mount.model.height : self.vehicleId ? 2 : 0;
     const distance = scoped ? 4 : CAMERA_DISTANCE + rideBoost * 1.3;
     const height = scoped ? 3 : CAMERA_HEIGHT + rideBoost * 0.9;
     const desired = new THREE.Vector3(
@@ -2642,6 +2810,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       yaw: g.aimYaw,
       pitch: g.aimPitch,
       jump: k.has("Space"),
+      sprint: k.has("ShiftLeft") || k.has("ShiftRight"),
       attack: g.attackHeld && !g.shopOpen
     });
   }

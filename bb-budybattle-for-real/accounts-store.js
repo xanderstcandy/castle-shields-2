@@ -1,7 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const ACCOUNT_COLUMNS = "username, password, drops, stars, shop_coins, shop_diamonds, shop_inventory, shop_synced, grants_applied";
+const ACCOUNT_COLUMNS = "username, password, drops, stars, shop_coins, shop_diamonds, shop_inventory, shop_synced, grants_applied, coop_friends, coop_incoming";
 
 function cleanObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -18,7 +18,9 @@ function normalizeAccountFields(account) {
     shopDiamonds: Math.max(0, Math.floor(Number(account.shopDiamonds) || 0)),
     shopInventory: cleanObject(account.shopInventory),
     shopSynced: Boolean(account.shopSynced),
-    grantsApplied: cleanList(account.grantsApplied)
+    grantsApplied: cleanList(account.grantsApplied),
+    coopFriends: cleanList(account.coopFriends),
+    coopIncoming: cleanList(account.coopIncoming)
   };
 }
 
@@ -33,7 +35,9 @@ function rowToAccount(row) {
     shopDiamonds: row.shop_diamonds,
     shopInventory: row.shop_inventory,
     shopSynced: row.shop_synced,
-    grantsApplied: row.grants_applied
+    grantsApplied: row.grants_applied,
+    coopFriends: row.coop_friends,
+    coopIncoming: row.coop_incoming
   });
 }
 
@@ -78,7 +82,16 @@ function fileStore(accountsFile, dataDir) {
       const accounts = readJsonAccounts(accountsFile);
       const index = accounts.findIndex((entry) => entry.username.toLowerCase() === account.username.toLowerCase());
       if (index === -1) return false;
-      accounts[index] = normalizeAccountFields(account);
+      const stored = normalizeAccountFields(accounts[index]);
+      accounts[index] = normalizeAccountFields({ ...account, coopFriends: stored.coopFriends, coopIncoming: stored.coopIncoming });
+      writeJsonAccounts(accountsFile, dataDir, accounts);
+      return true;
+    },
+    async saveCoop(usernameKey, friends, incoming) {
+      const accounts = readJsonAccounts(accountsFile);
+      const index = accounts.findIndex((entry) => entry.username.toLowerCase() === usernameKey);
+      if (index === -1) return false;
+      accounts[index] = normalizeAccountFields({ ...accounts[index], coopFriends: friends, coopIncoming: incoming });
       writeJsonAccounts(accountsFile, dataDir, accounts);
       return true;
     }
@@ -126,7 +139,9 @@ function postgresStore(pool, accountsFile) {
           ADD COLUMN IF NOT EXISTS shop_diamonds integer NOT NULL DEFAULT 0,
           ADD COLUMN IF NOT EXISTS shop_inventory jsonb NOT NULL DEFAULT '{}'::jsonb,
           ADD COLUMN IF NOT EXISTS shop_synced boolean NOT NULL DEFAULT false,
-          ADD COLUMN IF NOT EXISTS grants_applied jsonb NOT NULL DEFAULT '[]'::jsonb
+          ADD COLUMN IF NOT EXISTS grants_applied jsonb NOT NULL DEFAULT '[]'::jsonb,
+          ADD COLUMN IF NOT EXISTS coop_friends jsonb NOT NULL DEFAULT '[]'::jsonb,
+          ADD COLUMN IF NOT EXISTS coop_incoming jsonb NOT NULL DEFAULT '[]'::jsonb
       `);
       await migrateFromFileIfEmpty();
     },
@@ -173,6 +188,13 @@ function postgresStore(pool, accountsFile) {
           next.shopSynced,
           JSON.stringify(next.grantsApplied)
         ]
+      );
+      return result.rowCount > 0;
+    },
+    async saveCoop(usernameKey, friends, incoming) {
+      const result = await pool.query(
+        "UPDATE bb_accounts SET coop_friends = $2::jsonb, coop_incoming = $3::jsonb WHERE username_key = $1",
+        [usernameKey, JSON.stringify(cleanList(friends)), JSON.stringify(cleanList(incoming))]
       );
       return result.rowCount > 0;
     }
