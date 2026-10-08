@@ -149,7 +149,7 @@ const WEAPON_DAMAGE = {
   "Assault Rifle": 25, "Sniper Rifle": 80, "Sniper": 75, "Bazooka": 25, "Automatic Rifle": 22, "Energy Pistol": 40, "BB Gun": 15,
   "Jetpack": 0, "Body Armor": 0, "Combat Helmet": 0, "Riot Shield": 5, "Grappling Hook": 3,
   "Stun Baton": 6, "Chainsaw": 40, "Fire Axe": 24, "Pickaxe": 18, "Shovel": 12,
-  "Garden Hoe": 10, "Rake": 7, "Broom": 4, "Umbrella": 5, "Walking Stick": 7,
+  "Garden Hoe": 10, "Rake": 7, "Broom": 4, "Umbrella": 5, "Walking Stick": 15,
   "Golf Club": 13, "Hockey Stick": 11, "Cricket Bat": 13, "Tennis Racket": 6, "Frying Pan": 12,
   "Cast Iron Skillet": 16, "Hot Sauce Bottle": 2, "Salt Shaker": 1, "Pepper Mill": 4, "Fish Slice": 3,
   "Spatula": 3, "Pizza Cutter": 6, "Chopsticks": 2, "Sushi Knife": 16, "Butcher Saw": 18,
