@@ -18,38 +18,16 @@
   const MAP_IDS = ["island", "volcano", "hardVolcano"];
 
   const MAP_LABELS = {
-    island: "Lava Island",
+    island: "Sinking Island",
     volcano: "Volcano",
     hardVolcano: "Hard Volcano"
   };
 
-  const ISLAND_LAVA_SPREAD = 280;
-  const ISLAND_SAFE_RADIUS = 52;
-
   const HAZARDS = {
-    island: { kind: "islandLava", graceMs: 60000, stepMs: 45000, fillPerStep: 0.11 },
+    island: { kind: "water", graceMs: 60000, stepMs: 45000, stepAmount: 0.55 },
     volcano: { kind: "lava", graceMs: 45000, stepMs: 30000, stepAmount: 18, startRadius: 20 },
     hardVolcano: { kind: "lava", graceMs: 30000, stepMs: 25000, stepAmount: 22, startRadius: 22, rocks: true }
   };
-
-  function islandSafeZone(seed) {
-    const angle = hash2(seed, 7, 19) * Math.PI * 2;
-    const dist = 302 + hash2(seed, 11, 23) * 38;
-    return { x: Math.cos(angle) * dist, z: Math.sin(angle) * dist, r: ISLAND_SAFE_RADIUS };
-  }
-
-  function pointInIslandSafe(x, z, hazard) {
-    if (!hazard || hazard.kind !== "islandLava") return false;
-    return Math.hypot(x - hazard.safeX, z - hazard.safeZ) <= hazard.safeR;
-  }
-
-  function pointInIslandLava(x, z, hazard) {
-    if (!hazard || hazard.kind !== "islandLava" || !(hazard.fillT > 0)) return false;
-    if (pointInIslandSafe(x, z, hazard)) return false;
-    if (hazard.fillT >= 1) return true;
-    const distSafe = Math.hypot(x - hazard.safeX, z - hazard.safeZ);
-    return distSafe >= hazard.safeR + (1 - hazard.fillT) * ISLAND_LAVA_SPREAD;
-  }
 
   const ROCK_WARNING_MS = 2000;
   const ROCK_RADIUS = 4;
@@ -118,26 +96,14 @@
     return h;
   }
 
-  function hazardAt(mapId, elapsedMs, seed = 0) {
+  function hazardAt(mapId, elapsedMs) {
     const hazard = HAZARDS[mapId];
     const steps = elapsedMs < hazard.graceMs ? 0 : Math.floor((elapsedMs - hazard.graceMs) / hazard.stepMs) + 1;
     const nextStepMs = elapsedMs < hazard.graceMs
       ? hazard.graceMs - elapsedMs
       : hazard.stepMs - ((elapsedMs - hazard.graceMs) % hazard.stepMs);
-    if (hazard.kind === "islandLava") {
-      const fillT = Math.min(1, steps * hazard.fillPerStep);
-      const safe = islandSafeZone(seed);
-      return {
-        kind: "islandLava",
-        waterLevel: 0,
-        lavaRadius: 0,
-        fillT,
-        safeX: safe.x,
-        safeZ: safe.z,
-        safeR: safe.r,
-        steps,
-        nextStepMs
-      };
+    if (hazard.kind === "water") {
+      return { kind: "water", waterLevel: steps * hazard.stepAmount, lavaRadius: 0, steps, nextStepMs };
     }
     return {
       kind: "lava",
@@ -724,7 +690,6 @@
       if (h < 1.5) continue;
       if (hazard && hazard.waterLevel && h < hazard.waterLevel + 1) continue;
       if (hazard && hazard.lavaRadius && r < hazard.lavaRadius + 15) continue;
-      if (hazard && pointInIslandLava(x, z, hazard)) continue;
       if (map.id !== "island" && r < CONE_RADIUS + 5) continue;
       if (buildingAt(map, x, z)) continue;
       return { x, z };
@@ -755,11 +720,6 @@
     levelAt,
     rampRect,
     hazardAt,
-    islandSafeZone,
-    pointInIslandLava,
-    pointInIslandSafe,
-    ISLAND_LAVA_SPREAD,
-    ISLAND_SAFE_RADIUS,
     generateMap,
     resolveCollision,
     segmentHitsWall,
