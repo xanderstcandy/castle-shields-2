@@ -1183,13 +1183,21 @@ function applyAccountToState(account) {
   state.leagueName = account.leagueName || "";
   state.leagueRank = account.leagueRank || 0;
   state.stars = Number.isFinite(account.stars) ? account.stars : 0;
-  const serverCoins = Math.max(0, Number(account.shopCoins) || 0);
-  const serverDiamonds = Math.max(0, Number(account.shopDiamonds) || 0);
-  const local = readShopWalletRecord(account.username);
-  state.shopCoins = Math.max(serverCoins, local.coins);
-  state.shopDiamonds = Math.max(serverDiamonds, local.diamonds);
-  writeShopWalletRecord(account.username, state.shopCoins, state.shopDiamonds);
+}
+
+function loadShopProfile(account) {
+  if (account.shopSynced) {
+    state.shopCoins = Math.max(0, Number(account.shopCoins) || 0);
+    state.shopDiamonds = Math.max(0, Number(account.shopDiamonds) || 0);
+    applyShopInventory(sanitizeShopInventory(account.shopInventory));
+  } else {
+    const local = readShopWalletRecord(account.username);
+    state.shopCoins = Math.max(Number(account.shopCoins) || 0, local.coins);
+    state.shopDiamonds = Math.max(Number(account.shopDiamonds) || 0, local.diamonds);
+    applyShopInventory(readShopInventoryRecord(account.username));
+  }
   persistShopWallet();
+  persistShopInventory();
 }
 
 function walletStoreKey(username) {
@@ -1270,7 +1278,11 @@ function readShopInventoryStore() {
 }
 
 function readShopInventoryRecord(username) {
-  const entry = username ? readShopInventoryStore()[username] : null;
+  const store = readShopInventoryStore();
+  return sanitizeShopInventory(username ? store[walletStoreKey(username)] || store[username] : null);
+}
+
+function sanitizeShopInventory(entry) {
   const oneGame = {};
   if (entry && entry.oneGame && typeof entry.oneGame === "object") {
     Object.entries(entry.oneGame).forEach(([name, count]) => {
@@ -1474,7 +1486,10 @@ function syncShopWalletFromStorage() {
   const wallet = readShopWalletRecord(state.username);
   state.shopCoins = wallet.coins;
   state.shopDiamonds = wallet.diamonds;
-  const inventory = readShopInventoryRecord(state.username);
+  applyShopInventory(readShopInventoryRecord(state.username));
+}
+
+function applyShopInventory(inventory) {
   state.ownedOneGame = inventory.oneGame;
   state.ownedPermanent = inventory.permanent;
   state.ownedPotions = inventory.potions;
@@ -1488,37 +1503,55 @@ function syncShopWalletFromStorage() {
   state.equippedSkin = inventory.equippedSkin;
 }
 
+let profileSaveTimer = null;
+
+function scheduleProfileSave() {
+  if (!state.username || !state.password) return;
+  clearTimeout(profileSaveTimer);
+  const username = state.username;
+  const password = state.password;
+  profileSaveTimer = setTimeout(() => {
+    postAuth("/api/profile", username, password, {
+      coins: state.shopCoins,
+      diamonds: state.shopDiamonds,
+      inventory: currentShopInventory()
+    }).catch(() => {});
+  }, 250);
+}
+
+function currentShopInventory() {
+  return {
+    oneGame: state.ownedOneGame,
+    permanent: state.ownedPermanent,
+    potions: state.ownedPotions,
+    potionsPermanent: state.ownedPotionsPermanent,
+    equippedPotion: state.equippedPotion,
+    equipped: state.equippedWeapons,
+    bbOneGame: state.ownedBbsOneGame,
+    bbPermanent: state.ownedBbsPermanent,
+    equippedBb: state.equippedBb,
+    skins: state.ownedSkins,
+    equippedSkin: state.equippedSkin
+  };
+}
+
 function persistShopWallet() {
   if (!state.username) return;
   writeShopWalletRecord(state.username, state.shopCoins, state.shopDiamonds);
-  if (!state.password) return;
-  postAuth("/api/wallet", state.username, state.password, {
-    coins: state.shopCoins,
-    diamonds: state.shopDiamonds
-  }).catch(() => {});
+  scheduleProfileSave();
 }
 
 function persistShopInventory() {
   if (!state.username) return;
   try {
     const store = readShopInventoryStore();
-    store[state.username] = {
-      oneGame: state.ownedOneGame,
-      permanent: state.ownedPermanent,
-      potions: state.ownedPotions,
-      potionsPermanent: state.ownedPotionsPermanent,
-      equippedPotion: state.equippedPotion,
-      equipped: state.equippedWeapons,
-      bbOneGame: state.ownedBbsOneGame,
-      bbPermanent: state.ownedBbsPermanent,
-      equippedBb: state.equippedBb,
-      skins: state.ownedSkins,
-      equippedSkin: state.equippedSkin
-    };
+    delete store[state.username];
+    store[walletStoreKey(state.username)] = currentShopInventory();
     localStorage.setItem(SHOP_INVENTORY_KEY, JSON.stringify(store));
   } catch {
     // ignore storage failures
   }
+  scheduleProfileSave();
 }
 
 function getWeaponPlanPrice(name, plan) {
@@ -3604,6 +3637,7 @@ async function submitAuth(form) {
     writeLastCallsign(account.username);
     state.password = password;
     applyAccountToState(account);
+    loadShopProfile(account);
     state.leaderboard = null;
     state.leaderboardError = "";
     state.screen = "lobby";

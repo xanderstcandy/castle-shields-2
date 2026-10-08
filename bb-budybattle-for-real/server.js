@@ -50,15 +50,17 @@ function isRealAccount(account) {
 function ensureAccountFields(account) {
   const next = { ...account };
   if (!Number.isFinite(next.stars)) next.stars = 0;
-  next.shopCoins = Math.max(0, Number(next.shopCoins) || 0);
-  next.shopDiamonds = Math.max(0, Number(next.shopDiamonds) || 0);
+  next.shopCoins = Math.max(0, Math.floor(Number(next.shopCoins) || 0));
+  next.shopDiamonds = Math.max(0, Math.floor(Number(next.shopDiamonds) || 0));
+  next.shopInventory = next.shopInventory && typeof next.shopInventory === "object" && !Array.isArray(next.shopInventory) ? next.shopInventory : {};
+  next.shopSynced = Boolean(next.shopSynced);
+  next.grantsApplied = Array.isArray(next.grantsApplied) ? next.grantsApplied : [];
   delete next.leagueRank;
   delete next.rankPoints;
   return next;
 }
 
-const walletGrantsFile = path.join(dataDir, "wallet-grants.json");
-const walletGrantsAppliedFile = path.join(dataDir, "wallet-grants-applied.json");
+const walletGrantsFile = path.join(root, "wallet-grants.json");
 
 function readJsonFile(filePath, fallback) {
   try {
@@ -70,25 +72,21 @@ function readJsonFile(filePath, fallback) {
 
 async function applyWalletGrants() {
   const grants = readJsonFile(walletGrantsFile, []);
-  if (!Array.isArray(grants) || !grants.length) return;
-  const applied = readJsonFile(walletGrantsAppliedFile, []);
-  const appliedIds = new Set(Array.isArray(applied) ? applied : []);
-  let changed = false;
+  if (!Array.isArray(grants)) return;
   for (const grant of grants) {
-    if (!grant || typeof grant.id !== "string" || appliedIds.has(grant.id)) continue;
-    const username = String(grant.username || "").trim();
-    if (!username) continue;
-    const account = await store.find(username.toLowerCase());
+    if (!grant || typeof grant.id !== "string") continue;
+    const account = await store.find(String(grant.username || "").trim().toLowerCase());
     if (!account) continue;
     const next = ensureAccountFields(account);
-    next.shopCoins += Math.max(0, Math.floor(Number(grant.coins) || 0));
-    next.shopDiamonds += Math.max(0, Math.floor(Number(grant.diamonds) || 0));
+    if (next.grantsApplied.includes(grant.id)) continue;
+    next.shopCoins = Math.max(0, Math.floor(Number(grant.coins) || 0));
+    next.shopDiamonds = Math.max(0, Math.floor(Number(grant.diamonds) || 0));
+    next.shopInventory = grant.inventory && typeof grant.inventory === "object" ? grant.inventory : {};
+    next.shopSynced = true;
+    next.grantsApplied = [...next.grantsApplied, grant.id];
     await store.save(next);
-    appliedIds.add(grant.id);
-    changed = true;
-    console.log(`Applied wallet grant ${grant.id} to ${next.username}: +${grant.coins || 0} coins, +${grant.diamonds || 0} diamonds`);
+    console.log(`Applied grant ${grant.id} to ${next.username}: ${next.shopCoins} coins, ${next.shopDiamonds} diamonds`);
   }
-  if (changed) fs.writeFileSync(walletGrantsAppliedFile, JSON.stringify([...appliedIds]));
 }
 
 function leagueFromPlacement(rank, total, stars) {
@@ -184,6 +182,8 @@ function publicAccount(account, accounts) {
     stars: fields.stars,
     shopCoins: fields.shopCoins,
     shopDiamonds: fields.shopDiamonds,
+    shopInventory: fields.shopInventory,
+    shopSynced: fields.shopSynced,
     leagueSize: roster.length
   };
 }
@@ -306,16 +306,18 @@ async function handleApi(req, res, urlPath) {
     return;
   }
 
-  if (urlPath === "/api/wallet") {
+  if (urlPath === "/api/profile") {
     if (!existing || existing.password !== password) {
       sendJson(res, 401, { error: "Sign in again to save your shop balance." });
       return;
     }
-    const coins = Math.max(0, Math.floor(Number(payload.coins) || 0));
-    const diamonds = Math.max(0, Math.floor(Number(payload.diamonds) || 0));
     const next = ensureAccountFields(existing);
-    next.shopCoins = coins;
-    next.shopDiamonds = diamonds;
+    next.shopCoins = Math.max(0, Math.floor(Number(payload.coins) || 0));
+    next.shopDiamonds = Math.max(0, Math.floor(Number(payload.diamonds) || 0));
+    if (payload.inventory && typeof payload.inventory === "object" && !Array.isArray(payload.inventory)) {
+      next.shopInventory = payload.inventory;
+    }
+    next.shopSynced = true;
     await store.save(next);
     const accounts = await loadAccounts();
     sendJson(res, 200, publicAccount(next, accounts));
@@ -353,7 +355,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if (resolvedPath === path.resolve(accountsFile)) {
+  if (resolvedPath === path.resolve(accountsFile) || resolvedPath === path.resolve(walletGrantsFile)) {
     res.writeHead(403);
     res.end("Forbidden");
     return;

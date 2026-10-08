@@ -1,8 +1,11 @@
 [
   {
-    "id": "xerwis-localhost-recovery",
+    "id": "xerwis-profile-2026-10-07",
     "username": "Xerwis",
     "coins": 416,
-    "diamonds": 5
+    "diamonds": 5,
+    "inventory": {
+      "permanent": ["Spoon"]
+    }
   }
 ]
