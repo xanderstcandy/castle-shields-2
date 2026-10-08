@@ -2076,7 +2076,7 @@ function createMatchServer({ wss, verifyAccount, awardStars, coopStore }) {
       const me = await coopStore.find(key);
       if (me && me.coopIncoming.length) {
         const names = me.coopIncoming.join(", ");
-        send(conn.ws, { t: "coop-notice", text: `Friend request${me.coopIncoming.length > 1 ? "s" : ""} waiting from ${names}. Accept on the Friend screen.` });
+        send(conn.ws, { t: "coop-notice", text: `Friend request${me.coopIncoming.length > 1 ? "s" : ""} waiting from ${names}. Check the Hub.` });
       }
       await pushToFriendsOf(conn.username);
     });
@@ -2137,7 +2137,7 @@ function createMatchServer({ wss, verifyAccount, awardStars, coopStore }) {
       await pushCoopKeys([fromKey, toKey]);
       if (targetConn) {
         send(conn.ws, { t: "coop-notice", text: `Friend request sent to ${target.username}.` });
-        send(targetConn.ws, { t: "coop-notice", text: `${me.username} wants to co-op. Accept on the Friend screen.` });
+        send(targetConn.ws, { t: "coop-notice", text: `${me.username} sent you a friend request. Accept on the Hub.` });
       } else {
         send(conn.ws, { t: "coop-notice", text: `${target.username} is offline. They'll get your request next time they sign in.` });
       }
