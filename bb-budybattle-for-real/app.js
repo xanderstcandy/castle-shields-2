@@ -1774,6 +1774,10 @@ function isCoopScreen() {
   return state.screen === "coop" || state.screen === "coop-friend" || state.screen === "coop-friends" || state.screen === "coop-play" || state.screen === "coop-chat";
 }
 
+function needsCoopConnection() {
+  return isCoopScreen() || state.screen === "lobby";
+}
+
 function closeCoopSocket() {
   if (!coopSocket || coopSocket === matchSocket) {
     coopSocket = null;
@@ -1821,7 +1825,7 @@ function ensureCoopSocket() {
     if (coopSocket !== socket) return;
     coopSocket = null;
     coopReady = false;
-    if (isCoopScreen()) {
+    if (needsCoopConnection()) {
       state.coopNotice = "Lost connection to co-op lobby. Reconnecting…";
       render();
       ensureCoopSocket();
@@ -1832,14 +1836,14 @@ function ensureCoopSocket() {
 function handleCoopMessage(msg) {
   if (msg.t === "hello-ok") {
     coopReady = true;
-    if (isCoopScreen()) render();
+    if (needsCoopConnection()) render();
     return;
   }
   if (msg.t === "coop") {
     state.coopFriends = Array.isArray(msg.friends) ? msg.friends : [];
     state.coopIncoming = Array.isArray(msg.incoming) ? msg.incoming : [];
     state.coopOutgoing = Array.isArray(msg.outgoing) ? msg.outgoing : [];
-    if (isCoopScreen()) render();
+    if (needsCoopConnection()) render();
     return;
   }
   if (msg.t === "party") {
@@ -1850,7 +1854,7 @@ function handleCoopMessage(msg) {
   }
   if (msg.t === "coop-notice") {
     state.coopNotice = String(msg.text || "");
-    if (isCoopScreen()) render();
+    if (needsCoopConnection()) render();
     return;
   }
   if (msg.t === "start" && coopSocket) {
@@ -1897,12 +1901,17 @@ function sendCoopFriendRequest(username) {
 }
 
 function acceptCoopFriend(from) {
-  if (!coopSocket || coopSocket.readyState !== WebSocket.OPEN) {
+  if (!sendCoop({ t: "friendAccept", from })) {
     state.coopNotice = "Not connected. Wait a moment and try again.";
     render();
-    return;
   }
-  coopSocket.send(JSON.stringify({ t: "friendAccept", from }));
+}
+
+function declineCoopFriend(from) {
+  if (!sendCoop({ t: "friendDecline", from })) {
+    state.coopNotice = "Not connected. Wait a moment and try again.";
+    render();
+  }
 }
 
 const VOICE_ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }];
@@ -2736,6 +2745,25 @@ function coopNoticeHtml() {
   return `<p class="coop-notice" role="status">${escapeHtml(state.coopNotice)}</p>`;
 }
 
+function hubFriendRequestRow(from) {
+  const name = escapeHtml(from);
+  return `
+    <div class="hub-friend-request" role="listitem">
+      <span class="hub-friend-request-name">${name}</span>
+      <span class="hub-friend-request-text">sent you a friend request</span>
+      <button type="button" class="hub-friend-request-btn hub-friend-request-btn--accept" data-action="coop-accept" data-from="${name}">accept</button>
+      <button type="button" class="hub-friend-request-btn hub-friend-request-btn--decline" data-action="coop-decline" data-from="${name}">decline</button>
+    </div>`;
+}
+
+function hubFriendRequestsHtml() {
+  if (!state.coopIncoming.length) return "";
+  return `
+    <section class="hub-friend-requests" aria-label="Friend requests">
+      ${state.coopIncoming.map((row) => hubFriendRequestRow(row.from)).join("")}
+    </section>`;
+}
+
 function renderCoopMenu() {
   ensureCoopSocket();
   renderScene(renderCard(`
@@ -2768,10 +2796,7 @@ function renderCoopMenu() {
 function renderCoopFriend() {
   ensureCoopSocket();
   const incoming = state.coopIncoming.map((row) => `
-    <li class="coop-request">
-      <span class="coop-request-name">${escapeHtml(row.from)}</span>
-      <button class="drop-button coop-accept" type="button" data-action="coop-accept" data-from="${escapeHtml(row.from)}">Accept</button>
-    </li>
+    <li class="coop-request">${hubFriendRequestRow(row.from)}</li>
   `).join("");
   const outgoing = state.coopOutgoing.map((row) => `
     <li class="coop-request coop-request--pending">
@@ -4154,6 +4179,7 @@ function renderLobby() {
       <h1 class="drop-title drop-title-compact">${escapeHtml(state.username)}</h1>
       <p class="drop-tagline">Pick your drop <span class="tagline-mode">(for real)</span></p>
     </header>
+    ${hubFriendRequestsHtml()}
     <nav class="hub-menu" aria-label="Main menu">
       ${hubButton("All Rewards", "rewards")}
       ${hubButton("Shops", "shops")}
@@ -4210,7 +4236,10 @@ function render() {
   }
 
   state.shake = 0;
-  if (state.username && state.password) ensureSocialSocket();
+  if (state.username && state.password) {
+    ensureSocialSocket();
+    if (needsCoopConnection()) ensureCoopSocket();
+  }
   renderSocialBar();
 
   const firstInput = app.querySelector("input[name='username']");
@@ -4605,6 +4634,11 @@ app.addEventListener("click", (event) => {
 
   if (action === "coop-accept") {
     acceptCoopFriend(actionTarget.dataset.from || "");
+    return;
+  }
+
+  if (action === "coop-decline") {
+    declineCoopFriend(actionTarget.dataset.from || "");
     return;
   }
 

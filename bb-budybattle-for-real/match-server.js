@@ -282,7 +282,7 @@ class Match {
   hazardNow() {
     const elapsed = this.elapsed();
     const ms = this.zombies ? 0 : this.mode === "fun" ? elapsed * FUN_HAZARD_TIME_SCALE : elapsed;
-    return mapGen.hazardAt(this.mapId, ms, this.map.seed);
+    return mapGen.hazardAt(this.mapId, ms);
   }
 
   addPlayer(name, avatar, loadout, ws) {
@@ -1561,9 +1561,6 @@ class Match {
         const submerged = y < waterSurface + 0.55 || standing < waterSurface + 0.35;
         if (submerged) return { dps: mapGen.WATER_DPS, cause: "Drowned" };
       }
-      if (mapGen.pointInIslandLava(x, z, hazard) && !fireResist && y < ground + 1.5) {
-        return { dps: mapGen.LAVA_DPS, cause: "Lava" };
-      }
       if (hazard.lavaRadius && Math.hypot(x, z) < hazard.lavaRadius && !fireResist && y < ground + 1.5) {
         return { dps: mapGen.LAVA_DPS, cause: "Lava" };
       }
@@ -1733,14 +1730,6 @@ class Match {
       goTo(p.x * 0.2, p.z * 0.2);
       return;
     }
-    if (hazard.kind === "islandLava" && hazard.fillT > 0) {
-      const distSafe = Math.hypot(p.x - hazard.safeX, p.z - hazard.safeZ);
-      if (mapGen.pointInIslandLava(p.x, p.z, hazard) || distSafe > hazard.safeR * 0.85) {
-        const jitter = (this.rand() - 0.5) * hazard.safeR * 0.35;
-        goTo(hazard.safeX + jitter, hazard.safeZ + jitter * 0.6);
-        return;
-      }
-    }
     if (hazard.lavaRadius && r < hazard.lavaRadius + 18) {
       goTo((p.x / (r || 1)) * (hazard.lavaRadius + 60), (p.z / (r || 1)) * (hazard.lavaRadius + 60));
       return;
@@ -1858,7 +1847,6 @@ class Match {
     let chestDist = 140;
     this.map.chests.forEach((entry) => {
       if (this.chestsOpen.has(entry.id) || Math.abs(entry.y - p.y) > 2.5) return;
-      if (mapGen.pointInIslandLava(entry.x, entry.z, hazard)) return;
       if (hazard.lavaRadius && Math.hypot(entry.x, entry.z) < hazard.lavaRadius + 25) return;
       if (hazard.waterLevel && mapGen.terrainHeight(this.map, entry.x, entry.z) < hazard.waterLevel + 1.5) return;
       const d = Math.hypot(entry.x - p.x, entry.z - p.z);
@@ -2168,6 +2156,21 @@ function createMatchServer({ wss, verifyAccount, awardStars, coopStore }) {
         return;
       }
       await makeFriends(me, from);
+    });
+  }
+
+  function handleFriendDecline(conn, fromName) {
+    const fromKey = coopUserKey(fromName);
+    const toKey = coopUserKey(conn.username);
+    coopTask(conn, async () => {
+      const me = await coopStore.find(toKey);
+      if (!me || !hasName(me.coopIncoming, fromName)) {
+        await pushCoop(conn);
+        return;
+      }
+      await coopStore.saveCoop(toKey, me.coopFriends, withoutName(me.coopIncoming, fromName));
+      await pushCoopKeys([toKey, fromKey]);
+      send(conn.ws, { t: "coop-notice", text: `Declined ${fromName}'s friend request.` });
     });
   }
 
@@ -2613,6 +2616,8 @@ function createMatchServer({ wss, verifyAccount, awardStars, coopStore }) {
         handleFriendRequest(conn, msg.to);
       } else if (msg.t === "friendAccept") {
         handleFriendAccept(conn, msg.from);
+      } else if (msg.t === "friendDecline") {
+        handleFriendDecline(conn, String(msg.from || "").trim());
       } else if (msg.t === "battleInvite") {
         handleBattleInvite(conn, String(msg.to || "").trim());
       } else if (msg.t === "battleAccept") {
