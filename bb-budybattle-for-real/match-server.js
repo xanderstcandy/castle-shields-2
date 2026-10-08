@@ -6,6 +6,9 @@ const TICK_MS = 50;
 const QUEUE_WAIT_MS = 90000;
 const PLAYER_RADIUS = 0.5;
 const PLAYER_SPEED = 7;
+const SPRINT_BOOST = 1.25;
+const SPRINT_DURATION_MS = 15000;
+const SPRINT_COOLDOWN_MS = 15000;
 const GRAVITY = 25;
 const JUMP_SPEED = 9;
 const PICKUP_RANGE = 3.2;
@@ -253,6 +256,8 @@ class Match {
       wood: 0,
       metal: 0,
       lastBuildAt: -99999,
+      sprintActiveUntil: 0,
+      sprintCooldownUntil: 0,
       kills: 0,
       effect: null,
       stunUntil: 0,
@@ -261,7 +266,7 @@ class Match {
       swingUntil: 0,
       alive: true,
       touchingWall: false,
-      input: { mx: 0, mz: 0, yaw: 0, pitch: 0, jump: false, attack: false },
+      input: { mx: 0, mz: 0, yaw: 0, pitch: 0, jump: false, attack: false, sprint: false },
       bot: ws ? null : { mode: "wander", goal: null, stuckAt: 0, lastPos: null, detourUntil: 0, detour: 0, thinkAt: 0, aimJitter: 0 },
       disconnectedAt: 0,
       riding: 0
@@ -718,7 +723,7 @@ class Match {
     if (!p || !p.alive) return;
     p.ws = null;
     p.disconnectedAt = Date.now();
-    p.input = { mx: 0, mz: 0, yaw: p.yaw, pitch: p.pitch, jump: false, attack: false };
+    p.input = { mx: 0, mz: 0, yaw: p.yaw, pitch: p.pitch, jump: false, attack: false, sprint: false };
   }
 
   resumePlayer(conn) {
@@ -759,7 +764,8 @@ class Match {
         yaw: Number(msg.yaw) || 0,
         pitch: Math.max(-1.2, Math.min(1.2, Number(msg.pitch) || 0)),
         jump: Boolean(msg.jump),
-        attack: Boolean(msg.attack)
+        attack: Boolean(msg.attack),
+        sprint: Boolean(msg.sprint)
       };
     } else if (msg.t === "select") {
       const slot = Math.floor(Number(msg.slot));
@@ -960,8 +966,21 @@ class Match {
       return;
     }
     if (p.riding) p.riding = 0;
-    const before = { x: p.x, z: p.z };
-    const pos = { x: p.x + mx * PLAYER_SPEED * dt, z: p.z + mz * PLAYER_SPEED * dt };
+    const sprintHeld = !stunned && input.sprint && len > 0;
+    if (sprintHeld && now >= p.sprintCooldownUntil && !p.sprintActiveUntil) p.sprintActiveUntil = now + SPRINT_DURATION_MS;
+    if (!sprintHeld && p.sprintActiveUntil && now < p.sprintActiveUntil) {
+      p.sprintActiveUntil = 0;
+      p.sprintCooldownUntil = now + SPRINT_COOLDOWN_MS;
+    }
+    let speed = PLAYER_SPEED;
+    if (p.sprintActiveUntil) {
+      if (sprintHeld && now < p.sprintActiveUntil) speed *= SPRINT_BOOST;
+      else if (now >= p.sprintActiveUntil) {
+        p.sprintActiveUntil = 0;
+        p.sprintCooldownUntil = now + SPRINT_COOLDOWN_MS;
+      }
+    }
+    const pos = { x: p.x + mx * speed * dt, z: p.z + mz * speed * dt };
     const wanted = { x: pos.x, z: pos.z };
     mapGen.resolveCollision(this.map, pos, PLAYER_RADIUS, p.y, this.doors);
     p.touchingWall = Math.hypot(pos.x - wanted.x, pos.z - wanted.z) > 0.001;
@@ -1510,6 +1529,112 @@ function createMatchServer({ wss, verifyAccount, awardStars }) {
     conn.queueKey = "";
   }
 
+  const onlineByKey = new Map();
+  const coopFriends = new Map();
+  const coopPending = new Map();
+
+  function coopUserKey(name) {
+    return String(name || "").trim().toLowerCase();
+  }
+
+  function coopSnapshot(conn) {
+    const key = coopUserKey(conn.username);
+    const friendKeys = coopFriends.get(key) || new Set();
+    const friends = [...friendKeys]
+      .map((entryKey) => onlineByKey.get(entryKey))
+      .filter(Boolean)
+      .map((entry) => entry.username);
+    const incoming = [];
+    const outgoing = [];
+    coopPending.forEach((req) => {
+      if (req.toKey === key) incoming.push({ from: req.fromName });
+      if (req.fromKey === key) outgoing.push({ to: req.toName });
+    });
+    return { friends, incoming, outgoing };
+  }
+
+  function pushCoop(conn) {
+    if (!conn.username) return;
+    send(conn.ws, { t: "coop", ...coopSnapshot(conn) });
+  }
+
+  function pushCoopPair(aKey, bKey) {
+    const a = onlineByKey.get(aKey);
+    const b = onlineByKey.get(bKey);
+    if (a) pushCoop(a);
+    if (b) pushCoop(b);
+  }
+
+  function registerOnline(conn) {
+    const key = coopUserKey(conn.username);
+    const previous = onlineByKey.get(key);
+    if (previous && previous !== conn && previous.ws.readyState === 1) previous.ws.close();
+    onlineByKey.set(key, conn);
+    pushCoop(conn);
+  }
+
+  function unregisterOnline(conn) {
+    if (!conn.username) return;
+    const key = coopUserKey(conn.username);
+    if (onlineByKey.get(key) === conn) onlineByKey.delete(key);
+    [...coopPending.entries()].forEach(([id, req]) => {
+      if (req.fromKey === key || req.toKey === key) coopPending.delete(id);
+    });
+  }
+
+  function handleFriendRequest(conn, toName) {
+    const to = String(toName || "").trim();
+    const fromKey = coopUserKey(conn.username);
+    const toKey = coopUserKey(to);
+    if (!to || to.length > 20) {
+      send(conn.ws, { t: "coop-notice", text: "Enter a valid callsign (max 20 characters)." });
+      return;
+    }
+    if (toKey === fromKey) {
+      send(conn.ws, { t: "coop-notice", text: "You can't send a request to yourself." });
+      return;
+    }
+    if (coopFriends.get(fromKey)?.has(toKey)) {
+      send(conn.ws, { t: "coop-notice", text: `${to} is already on your co-op squad.` });
+      return;
+    }
+    const target = onlineByKey.get(toKey);
+    if (!target) {
+      send(conn.ws, { t: "coop-notice", text: `${to} isn't online in the hub right now.` });
+      return;
+    }
+    const pendingId = `${fromKey}:${toKey}`;
+    if (coopPending.has(pendingId)) {
+      send(conn.ws, { t: "coop-notice", text: `Request to ${to} is already waiting.` });
+      return;
+    }
+    coopPending.set(pendingId, { fromKey, fromName: conn.username, toKey, toName: target.username });
+    pushCoop(conn);
+    pushCoop(target);
+    send(conn.ws, { t: "coop-notice", text: `Friend request sent to ${target.username}.` });
+    send(target.ws, { t: "coop-notice", text: `${conn.username} wants to co-op. Accept on the Friend screen.` });
+  }
+
+  function handleFriendAccept(conn, fromName) {
+    const fromKey = coopUserKey(fromName);
+    const toKey = coopUserKey(conn.username);
+    const pendingId = `${fromKey}:${toKey}`;
+    const req = coopPending.get(pendingId);
+    if (!req) {
+      send(conn.ws, { t: "coop-notice", text: "That request is no longer pending." });
+      return;
+    }
+    coopPending.delete(pendingId);
+    if (!coopFriends.has(fromKey)) coopFriends.set(fromKey, new Set());
+    if (!coopFriends.has(toKey)) coopFriends.set(toKey, new Set());
+    coopFriends.get(fromKey).add(toKey);
+    coopFriends.get(toKey).add(fromKey);
+    pushCoopPair(fromKey, toKey);
+    const fromConn = onlineByKey.get(fromKey);
+    if (fromConn) send(fromConn.ws, { t: "coop-notice", text: `${conn.username} joined your co-op squad!` });
+    send(conn.ws, { t: "coop-notice", text: `${req.fromName} is on your squad.` });
+  }
+
   function joinQueue(conn, mode, map) {
     leaveQueue(conn);
     const key = queueKey(mode, map);
@@ -1612,6 +1737,7 @@ function createMatchServer({ wss, verifyAccount, awardStars }) {
             conn.loadout = sanitizeLoadout(msg.loadout);
             const resumeMatch = findResumeMatch(account.username);
             if (resumeMatch && resumeMatch.resumePlayer(conn)) return;
+            registerOnline(conn);
             send(ws, { t: "hello-ok" });
             if (conn.pendingQueue) {
               const pending = conn.pendingQueue;
@@ -1637,10 +1763,15 @@ function createMatchServer({ wss, verifyAccount, awardStars }) {
         joinQueue(conn, drop.mode, drop.map);
       } else if (msg.t === "leave") {
         leaveQueue(conn);
+      } else if (msg.t === "friendRequest") {
+        handleFriendRequest(conn, msg.to);
+      } else if (msg.t === "friendAccept") {
+        handleFriendAccept(conn, msg.from);
       }
     });
     ws.on("close", () => {
       leaveQueue(conn);
+      unregisterOnline(conn);
       if (conn.match) conn.match.disconnect(ws);
     });
   });

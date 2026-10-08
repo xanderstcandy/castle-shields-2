@@ -81,7 +81,12 @@ const state = {
   gearNotice: "",
   rewardsNotice: "",
   rewardsWheelRotation: 0,
-  rewardsSpinning: false
+  rewardsSpinning: false,
+  coopFriends: [],
+  coopIncoming: [],
+  coopOutgoing: [],
+  coopNotice: "",
+  coopDraft: ""
 };
 
 const REWARDS_WHEEL_SEGMENTS = [
@@ -575,13 +580,13 @@ function buddyAvatarSvg(avatarId, compact, yaw, equipped = [], cropViewBox = "")
   `);
 }
 
-async function postAuth(endpoint, username, password) {
+async function postAuth(endpoint, username, password, extra) {
   let response;
   try {
     response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password })
+      body: JSON.stringify(extra ? { username, password, ...extra } : { username, password })
     });
   } catch {
     throw new Error("Could not reach the drop server. Check your connection and try again.");
@@ -949,7 +954,9 @@ function modeButton(label, variant) {
       ? ` data-action="open-competitive-play"`
       : variant === "fun"
         ? ` data-action="start-for-fun"`
-        : "";
+        : variant === "coop"
+          ? ` data-action="open-coop"`
+          : "";
   return `
     <button class="drop-button hub-button mode-button mode-${variant}" type="button"${action}>
       <span class="hub-icon">${modeIcons[variant]}</span>
@@ -1176,14 +1183,25 @@ function applyAccountToState(account) {
   state.leagueName = account.leagueName || "";
   state.leagueRank = account.leagueRank || 0;
   state.stars = Number.isFinite(account.stars) ? account.stars : 0;
-  syncShopWalletFromStorage();
+  const serverCoins = Math.max(0, Number(account.shopCoins) || 0);
+  const serverDiamonds = Math.max(0, Number(account.shopDiamonds) || 0);
+  const local = readShopWalletRecord(account.username);
+  state.shopCoins = Math.max(serverCoins, local.coins);
+  state.shopDiamonds = Math.max(serverDiamonds, local.diamonds);
+  writeShopWalletRecord(account.username, state.shopCoins, state.shopDiamonds);
+  persistShopWallet();
+}
+
+function walletStoreKey(username) {
+  return String(username || "").trim().toLowerCase();
 }
 
 function readShopWalletRecord(username) {
   if (!username) return { coins: 0, diamonds: 0 };
   try {
     const store = JSON.parse(localStorage.getItem(SHOP_WALLET_KEY) || "{}");
-    const entry = store[username];
+    const key = walletStoreKey(username);
+    const entry = store[key] || store[username];
     if (!entry || typeof entry !== "object") return { coins: 0, diamonds: 0 };
     return {
       coins: Math.max(0, Number(entry.coins) || 0),
@@ -1230,7 +1248,9 @@ function writeShopWalletRecord(username, coins, diamonds) {
   if (!username) return;
   try {
     const store = JSON.parse(localStorage.getItem(SHOP_WALLET_KEY) || "{}");
-    store[username] = {
+    const key = walletStoreKey(username);
+    delete store[username];
+    store[key] = {
       coins: Math.max(0, Math.floor(coins)),
       diamonds: Math.max(0, Math.floor(diamonds))
     };
@@ -1469,7 +1489,13 @@ function syncShopWalletFromStorage() {
 }
 
 function persistShopWallet() {
+  if (!state.username) return;
   writeShopWalletRecord(state.username, state.shopCoins, state.shopDiamonds);
+  if (!state.password) return;
+  postAuth("/api/wallet", state.username, state.password, {
+    coins: state.shopCoins,
+    diamonds: state.shopDiamonds
+  }).catch(() => {});
 }
 
 function persistShopInventory() {
@@ -1705,6 +1731,112 @@ function renderCompetitivePlay() {
 }
 
 let matchSocket = null;
+let coopSocket = null;
+let coopReady = false;
+
+function isCoopScreen() {
+  return state.screen === "coop" || state.screen === "coop-friend" || state.screen === "coop-friends";
+}
+
+function closeCoopSocket() {
+  if (!coopSocket || coopSocket === matchSocket) {
+    coopSocket = null;
+    coopReady = false;
+    return;
+  }
+  const socket = coopSocket;
+  coopSocket = null;
+  coopReady = false;
+  socket.onclose = null;
+  if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close();
+}
+
+function ensureCoopSocket() {
+  if (!state.username || !state.password) return;
+  if (matchSocket && matchSocket.readyState === WebSocket.OPEN && state.screen !== "match") {
+    coopSocket = matchSocket;
+    coopReady = matchDropAuthed;
+    return;
+  }
+  if (coopSocket && coopSocket.readyState === WebSocket.OPEN) return;
+  if (coopSocket && coopSocket.readyState === WebSocket.CONNECTING) return;
+  closeCoopSocket();
+  const socket = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
+  coopSocket = socket;
+  socket.onopen = () => {
+    socket.send(JSON.stringify({
+      t: "hello",
+      username: state.username,
+      password: state.password,
+      avatar: state.avatar,
+      loadout: { weapons: state.equippedWeapons, potion: state.equippedPotion, bb: state.equippedBb, skin: state.equippedSkin }
+    }));
+  };
+  socket.onmessage = (event) => {
+    let msg;
+    try {
+      msg = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    handleCoopMessage(msg);
+  };
+  socket.onclose = () => {
+    if (coopSocket !== socket) return;
+    coopSocket = null;
+    coopReady = false;
+    if (isCoopScreen()) {
+      state.coopNotice = "Lost connection to co-op lobby. Reconnecting…";
+      render();
+      ensureCoopSocket();
+    }
+  };
+}
+
+function handleCoopMessage(msg) {
+  if (msg.t === "hello-ok") {
+    coopReady = true;
+    if (isCoopScreen()) render();
+    return;
+  }
+  if (msg.t === "coop") {
+    state.coopFriends = Array.isArray(msg.friends) ? msg.friends : [];
+    state.coopIncoming = Array.isArray(msg.incoming) ? msg.incoming : [];
+    state.coopOutgoing = Array.isArray(msg.outgoing) ? msg.outgoing : [];
+    if (isCoopScreen()) render();
+    return;
+  }
+  if (msg.t === "coop-notice") {
+    state.coopNotice = String(msg.text || "");
+    if (isCoopScreen()) render();
+  }
+}
+
+function sendCoopFriendRequest(username) {
+  const to = String(username || "").trim();
+  if (!to) {
+    state.coopNotice = "Enter a callsign to invite.";
+    render();
+    return;
+  }
+  state.coopDraft = to;
+  if (!coopSocket || coopSocket.readyState !== WebSocket.OPEN) {
+    state.coopNotice = "Connecting to co-op… try again in a moment.";
+    ensureCoopSocket();
+    render();
+    return;
+  }
+  coopSocket.send(JSON.stringify({ t: "friendRequest", to }));
+}
+
+function acceptCoopFriend(from) {
+  if (!coopSocket || coopSocket.readyState !== WebSocket.OPEN) {
+    state.coopNotice = "Not connected. Wait a moment and try again.";
+    render();
+    return;
+  }
+  coopSocket.send(JSON.stringify({ t: "friendAccept", from }));
+}
 
 function formatQueueWait(ms) {
   const total = Math.ceil(Math.max(0, ms) / 1000);
@@ -1919,6 +2051,8 @@ function handleMatchMessage(msg) {
     updateQueueDom();
   } else if (msg.t === "hello-ok") {
     matchDropAuthed = true;
+    coopReady = true;
+    if (isCoopScreen()) handleCoopMessage(msg);
     if (state.screen === "match" && window.BBGame && matchSocket) window.BBGame.setSocket(matchSocket);
     if (state.screen === "queue" && state.matchQueue) {
       state.matchQueue = { ...state.matchQueue, status: "Joining queue..." };
@@ -1966,6 +2100,8 @@ function handleMatchMessage(msg) {
     }
   } else if (msg.t === "end") {
     finishMatch(msg);
+  } else if (msg.t === "coop" || msg.t === "coop-notice") {
+    handleCoopMessage(msg);
   } else if (window.BBGame && state.screen === "match") {
     window.BBGame.handleMessage(msg);
   }
@@ -2057,6 +2193,100 @@ function renderMatchResult() {
     </button>
     <button class="drop-button ghost hub-sign-out" type="button" data-action="hub-back">Back to Hub</button>
   `, "queue-card"));
+}
+
+function coopNoticeHtml() {
+  if (!state.coopNotice) return "";
+  return `<p class="coop-notice" role="status">${escapeHtml(state.coopNotice)}</p>`;
+}
+
+function renderCoopMenu() {
+  ensureCoopSocket();
+  renderScene(renderCard(`
+    <header class="drop-head hub-head">
+      <div class="drop-crest">${crestSvg()}</div>
+      <p class="drop-kicker">B.B <span>Co-op</span></p>
+      <h1 class="drop-title drop-title-compact">Squad Up</h1>
+      <p class="drop-tagline">Invite buddies, build your squad, then play together <span class="tagline-mode">(soon)</span></p>
+    </header>
+    ${coopNoticeHtml()}
+    <nav class="coop-menu" aria-label="Co-op steps">
+      <button class="drop-button coop-step" type="button" data-action="coop-friend">
+        <span class="button-text">Friend</span>
+        <span class="coop-step-hint">Send invites</span>
+      </button>
+      <button class="drop-button coop-step coop-step-next" type="button" data-action="coop-next">
+        <span class="button-text">Next</span>
+        <span class="coop-step-hint">Your squad (${state.coopFriends.length})</span>
+      </button>
+      <button class="drop-button coop-step coop-step-play" type="button" data-action="coop-play">
+        <span class="button-text">Play</span>
+        <span class="coop-step-hint">Coming soon</span>
+      </button>
+    </nav>
+    <button class="drop-button ghost hub-sign-out" type="button" data-action="battle-back">Back to Drop Zone</button>
+    ${liveBar()}
+  `));
+}
+
+function renderCoopFriend() {
+  ensureCoopSocket();
+  const incoming = state.coopIncoming.map((row) => `
+    <li class="coop-request">
+      <span class="coop-request-name">${escapeHtml(row.from)}</span>
+      <button class="drop-button coop-accept" type="button" data-action="coop-accept" data-from="${escapeHtml(row.from)}">Accept</button>
+    </li>
+  `).join("");
+  const outgoing = state.coopOutgoing.map((row) => `
+    <li class="coop-request coop-request--pending">
+      <span class="coop-request-name">${escapeHtml(row.to)}</span>
+      <span class="coop-pending-label">Waiting…</span>
+    </li>
+  `).join("");
+  renderScene(renderCard(`
+    <header class="drop-head hub-head">
+      <p class="drop-kicker">Co-op · <span>Friend</span></p>
+      <h1 class="drop-title drop-title-compact">Invite a Buddy</h1>
+      <p class="drop-tagline">They must be signed in to the hub. Press Enter to send the request.</p>
+    </header>
+    ${coopNoticeHtml()}
+    <form class="drop-form coop-friend-form" data-form="coop-friend">
+      <label class="drop-field">
+        <span class="drop-label">Callsign</span>
+        <input name="username" type="text" autocomplete="off" maxlength="20" placeholder="Their callsign" value="${escapeHtml(state.coopDraft)}" required>
+      </label>
+      <button class="drop-button" type="submit">
+        <span class="button-text">Send Request</span>
+      </button>
+    </form>
+    ${incoming ? `<section class="coop-panel"><h2 class="coop-panel-title">Incoming</h2><ul class="coop-request-list">${incoming}</ul></section>` : ""}
+    ${outgoing ? `<section class="coop-panel"><h2 class="coop-panel-title">Sent</h2><ul class="coop-request-list">${outgoing}</ul></section>` : ""}
+    <button class="drop-button ghost hub-sign-out" type="button" data-action="coop-back">Back to Co-op</button>
+    ${liveBar()}
+  `));
+}
+
+function renderCoopFriends() {
+  ensureCoopSocket();
+  const squad = state.coopFriends.length
+    ? state.coopFriends.map((name) => `
+      <li class="coop-squad-member">
+        <span class="coop-squad-badge" aria-hidden="true">${modeIcons.coop}</span>
+        <span class="coop-squad-name">${escapeHtml(name)}</span>
+      </li>
+    `).join("")
+    : `<li class="coop-squad-empty">No squad yet. Tap <strong>Friend</strong> to invite someone who accepts your request.</li>`;
+  renderScene(renderCard(`
+    <header class="drop-head hub-head">
+      <p class="drop-kicker">Co-op · <span>Squad</span></p>
+      <h1 class="drop-title drop-title-compact">Your Friends</h1>
+      <p class="drop-tagline">Accepted buddies show up here and will join you when Play is ready.</p>
+    </header>
+    ${coopNoticeHtml()}
+    <ul class="coop-squad-list" aria-label="Co-op squad">${squad}</ul>
+    <button class="drop-button ghost hub-sign-out" type="button" data-action="coop-back">Back to Co-op</button>
+    ${liveBar()}
+  `));
 }
 
 function renderBattleMenu() {
@@ -3296,6 +3526,12 @@ function render() {
     renderRankedPlay();
   } else if (state.screen === "competitive-play") {
     renderCompetitivePlay();
+  } else if (state.screen === "coop") {
+    renderCoopMenu();
+  } else if (state.screen === "coop-friend") {
+    renderCoopFriend();
+  } else if (state.screen === "coop-friends") {
+    renderCoopFriends();
   } else if (state.screen === "queue") {
     renderQueue();
   } else if (state.screen === "match") {
@@ -3321,9 +3557,14 @@ function render() {
   state.shake = 0;
 
   const firstInput = app.querySelector("input[name='username']");
-  if (firstInput && !state.busy) {
+  if (firstInput && !state.busy && (state.screen === "sign-in" || state.screen === "create-account")) {
     firstInput.focus();
     firstInput.setSelectionRange(firstInput.value.length, firstInput.value.length);
+  }
+  const coopInput = app.querySelector(".coop-friend-form input[name='username']");
+  if (coopInput && state.screen === "coop-friend") {
+    coopInput.focus();
+    coopInput.setSelectionRange(coopInput.value.length, coopInput.value.length);
   }
 }
 
@@ -3627,6 +3868,43 @@ app.addEventListener("click", (event) => {
     return;
   }
 
+  if (action === "open-coop") {
+    state.coopNotice = "";
+    state.screen = "coop";
+    ensureCoopSocket();
+    render();
+    return;
+  }
+
+  if (action === "coop-friend") {
+    state.screen = "coop-friend";
+    render();
+    return;
+  }
+
+  if (action === "coop-next") {
+    state.screen = "coop-friends";
+    render();
+    return;
+  }
+
+  if (action === "coop-play") {
+    state.coopNotice = "Co-op matches aren't ready yet — squad up with Friend and Next for now.";
+    render();
+    return;
+  }
+
+  if (action === "coop-back") {
+    state.screen = "coop";
+    render();
+    return;
+  }
+
+  if (action === "coop-accept") {
+    acceptCoopFriend(actionTarget.dataset.from || "");
+    return;
+  }
+
   if (action === "open-leaderboard") {
     state.screen = "leaderboard";
     state.leaderboard = null;
@@ -3641,6 +3919,7 @@ app.addEventListener("click", (event) => {
   }
 
   if (action === "battle-back") {
+    if (state.screen === "coop" || state.screen === "coop-friend" || state.screen === "coop-friends") closeCoopSocket();
     state.screen = "battle";
     render();
     return;
@@ -3671,6 +3950,7 @@ app.addEventListener("click", (event) => {
   }
 
   if (action === "hub-back") {
+    closeCoopSocket();
     state.screen = "lobby";
     state.skinTryOn = "";
     render();
@@ -3678,6 +3958,7 @@ app.addEventListener("click", (event) => {
   }
 
   if (action === "sign-out") {
+    closeCoopSocket();
     state.screen = "sign-in";
     state.username = "";
     state.password = "";
@@ -3695,11 +3976,20 @@ app.addEventListener("click", (event) => {
   }
 });
 
+function submitCoopFriend(form) {
+  const data = new FormData(form);
+  sendCoopFriendRequest(String(data.get("username") || "").trim());
+}
+
 app.addEventListener("submit", (event) => {
   const form = event.target.closest("form[data-form]");
   if (!form) return;
 
   event.preventDefault();
+  if (form.dataset.form === "coop-friend") {
+    submitCoopFriend(form);
+    return;
+  }
   submitAuth(form);
 });
 

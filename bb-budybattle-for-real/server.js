@@ -50,9 +50,45 @@ function isRealAccount(account) {
 function ensureAccountFields(account) {
   const next = { ...account };
   if (!Number.isFinite(next.stars)) next.stars = 0;
+  next.shopCoins = Math.max(0, Number(next.shopCoins) || 0);
+  next.shopDiamonds = Math.max(0, Number(next.shopDiamonds) || 0);
   delete next.leagueRank;
   delete next.rankPoints;
   return next;
+}
+
+const walletGrantsFile = path.join(dataDir, "wallet-grants.json");
+const walletGrantsAppliedFile = path.join(dataDir, "wallet-grants-applied.json");
+
+function readJsonFile(filePath, fallback) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return fallback;
+  }
+}
+
+async function applyWalletGrants() {
+  const grants = readJsonFile(walletGrantsFile, []);
+  if (!Array.isArray(grants) || !grants.length) return;
+  const applied = readJsonFile(walletGrantsAppliedFile, []);
+  const appliedIds = new Set(Array.isArray(applied) ? applied : []);
+  let changed = false;
+  for (const grant of grants) {
+    if (!grant || typeof grant.id !== "string" || appliedIds.has(grant.id)) continue;
+    const username = String(grant.username || "").trim();
+    if (!username) continue;
+    const account = await store.find(username.toLowerCase());
+    if (!account) continue;
+    const next = ensureAccountFields(account);
+    next.shopCoins += Math.max(0, Math.floor(Number(grant.coins) || 0));
+    next.shopDiamonds += Math.max(0, Math.floor(Number(grant.diamonds) || 0));
+    await store.save(next);
+    appliedIds.add(grant.id);
+    changed = true;
+    console.log(`Applied wallet grant ${grant.id} to ${next.username}: +${grant.coins || 0} coins, +${grant.diamonds || 0} diamonds`);
+  }
+  if (changed) fs.writeFileSync(walletGrantsAppliedFile, JSON.stringify([...appliedIds]));
 }
 
 function leagueFromPlacement(rank, total, stars) {
@@ -146,6 +182,8 @@ function publicAccount(account, accounts) {
     leagueLabel: tier.label,
     leagueRank: youRow ? youRow.rank : roster.length || 1,
     stars: fields.stars,
+    shopCoins: fields.shopCoins,
+    shopDiamonds: fields.shopDiamonds,
     leagueSize: roster.length
   };
 }
@@ -268,6 +306,22 @@ async function handleApi(req, res, urlPath) {
     return;
   }
 
+  if (urlPath === "/api/wallet") {
+    if (!existing || existing.password !== password) {
+      sendJson(res, 401, { error: "Sign in again to save your shop balance." });
+      return;
+    }
+    const coins = Math.max(0, Math.floor(Number(payload.coins) || 0));
+    const diamonds = Math.max(0, Math.floor(Number(payload.diamonds) || 0));
+    const next = ensureAccountFields(existing);
+    next.shopCoins = coins;
+    next.shopDiamonds = diamonds;
+    await store.save(next);
+    const accounts = await loadAccounts();
+    sendJson(res, 200, publicAccount(next, accounts));
+    return;
+  }
+
   sendJson(res, 404, { error: "Unknown endpoint." });
 }
 
@@ -328,6 +382,7 @@ const server = http.createServer((req, res) => {
 createMatchServer({ wss: new WebSocketServer({ server, path: "/ws" }), verifyAccount, awardStars });
 
 ensureStoreReady()
+  .then(() => applyWalletGrants())
   .then(() => {
     server.listen(port, "0.0.0.0", () => {
       console.log(`B.B: BudyBattle, For Real-(battle royale) listening on http://localhost:${port} (accounts in ${store.label})`);
