@@ -2249,7 +2249,7 @@ function renderCoopMenu() {
         <span class="coop-step-hint">Send invites</span>
       </button>
       <button class="drop-button coop-step coop-step-next" type="button" data-action="coop-next">
-        <span class="button-text">Next</span>
+        <span class="button-text">Friends</span>
         <span class="coop-step-hint">Your squad (${state.coopFriends.length})</span>
       </button>
       <button class="drop-button coop-step coop-step-play" type="button" data-action="coop-play">
@@ -3924,7 +3924,7 @@ app.addEventListener("click", (event) => {
   }
 
   if (action === "coop-play") {
-    state.coopNotice = "Co-op matches aren't ready yet — squad up with Friend and Next for now.";
+    state.coopNotice = "Co-op matches aren't ready yet — squad up with Friend and Friends for now.";
     render();
     return;
   }
