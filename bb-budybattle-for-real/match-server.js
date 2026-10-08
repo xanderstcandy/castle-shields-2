@@ -27,7 +27,33 @@ const RIDER_SEAT = 0.82;
 const BB_MAX_COLLIDE = 1.2;
 const MODES = ["ranked", "competitive", "fun"];
 const FUN_BOT_TUNING = { cooldownScale: 3.2, damageScale: 0.4, engageRange: 9 };
+const SQUAD_BOT_TUNING = { cooldownScale: 1, damageScale: 1.6, engageRange: 24 };
 const FUN_HAZARD_TIME_SCALE = 0.35;
+const SQUAD_SIZE = 4;
+const ZOMBIE_FIRST_WAVE_MS = 12000;
+const ZOMBIE_WAVE_MS = 40000;
+const ZOMBIE_MAX_ALIVE = 40;
+const ZOMBIE_ATTACK_RANGE = 1.5;
+const ZOMBIE_ATTACK_MS = 1200;
+const ZOMBIE_SPAWN_MIN = 35;
+const ZOMBIE_SPAWN_MAX = 60;
+const ZOMBIE_KILL_COINS = 3;
+const ZOMBIE_REWARD_SECONDS_PER_COIN = 30;
+const ZOMBIE_REWARD_CAP = 120;
+const BOT_FOLLOW_RANGE = 18;
+
+function zombieWaveStats(wave) {
+  return {
+    count: Math.min(2 + wave * 2, 24),
+    hp: 25 + wave * 8,
+    damage: 3 + wave,
+    speed: Math.min(4.2 + wave * 0.25, 7.5)
+  };
+}
+
+function zombieReward(survivedMs, wave) {
+  return Math.min(ZOMBIE_REWARD_CAP, Math.floor(survivedMs / 1000 / ZOMBIE_REWARD_SECONDS_PER_COIN) + Math.max(0, wave - 1));
+}
 
 const BOT_NAMES = [
   "Pebble", "Rusty", "Noodle", "Biscuit", "Sprocket", "Mango", "Turbo", "Waffles", "Gizmo", "Pickles",
@@ -150,10 +176,12 @@ function sanitizeLoadout(loadout) {
 }
 
 class Match {
-  constructor(id, mode, mapId, humans, onFinish, awardStars) {
+  constructor(id, mode, mapId, humans, onFinish, awardStars, teamBots = 0) {
     this.id = id;
     this.mode = mode;
-    this.mapId = mode === "fun" ? "island" : mapId;
+    this.zombies = mode === "zombies";
+    this.mapId = mode === "fun" || this.zombies ? "island" : mapId;
+    mapId = this.mapId;
     this.seed = Math.floor(Math.random() * 2 ** 31);
     this.rand = mapGen.mulberry32(this.seed ^ 0x9e3779b9);
     this.map = mapGen.generateMap(mapId, this.seed);
@@ -185,21 +213,42 @@ class Match {
     this.nextRockAt = ROCK_INTERVAL_MS;
     this.finished = false;
     this.placesTaken = 0;
+    this.wave = 0;
+    this.nextWaveAt = ZOMBIE_FIRST_WAVE_MS;
 
+    const squadSpot = this.zombies ? mapGen.randomLandSpot(this.map, this.rand) : null;
     humans.forEach((conn) => this.addPlayer(conn.username, conn.avatar, conn.loadout, conn.ws));
     this.spawnWildlife();
     let botIndex = 0;
     const usedNames = new Set(this.players.map((p) => p.name));
-    while (this.players.length < data.MATCH_PLAYERS) {
+    const targetCount = this.zombies ? Math.min(SQUAD_SIZE, this.players.length + teamBots) : data.MATCH_PLAYERS;
+    while (this.players.length < targetCount) {
       let name = BOT_NAMES[botIndex % BOT_NAMES.length];
       if (botIndex >= BOT_NAMES.length) name += ` ${Math.floor(botIndex / BOT_NAMES.length) + 1}`;
       botIndex += 1;
       if (usedNames.has(name)) continue;
       usedNames.add(name);
-      const weapons = this.rand() < 0.6 ? [BOT_START_WEAPONS[Math.floor(this.rand() * BOT_START_WEAPONS.length)]] : [];
+      const weapons = this.zombies || this.rand() < 0.6 ? [BOT_START_WEAPONS[Math.floor(this.rand() * BOT_START_WEAPONS.length)]] : [];
       const bb = this.rand() < 0.3 ? COMMON_BBS[Math.floor(this.rand() * COMMON_BBS.length)].name : "";
       const skin = this.rand() < 0.35 ? data.SKIN_IDS[Math.floor(this.rand() * data.SKIN_IDS.length)] : "";
       this.addPlayer(name, AVATAR_IDS[Math.floor(this.rand() * AVATAR_IDS.length)], { weapons, potion: "", bb, skin }, null);
+    }
+    if (squadSpot) {
+      this.players.forEach((p, index) => {
+        const angle = (index / this.players.length) * Math.PI * 2;
+        const pos = { x: squadSpot.x + Math.cos(angle) * 2.5, z: squadSpot.z + Math.sin(angle) * 2.5 };
+        mapGen.resolveCollision(this.map, pos, PLAYER_RADIUS, undefined, this.doors);
+        p.x = pos.x;
+        p.z = pos.z;
+        p.y = mapGen.terrainHeight(this.map, pos.x, pos.z);
+      });
+      this.bbs.forEach((bb) => {
+        const owner = this.playerById(bb.owner);
+        if (!owner) return;
+        bb.x = owner.x + 1.5;
+        bb.z = owner.z + 1.5;
+        bb.y = mapGen.groundHeight(this.map, bb.x, bb.z, owner.y + 0.5);
+      });
     }
 
     const roster = this.players.map((p) => ({ id: p.id, name: p.name, avatar: p.avatar, skin: p.skin, bot: !p.ws }));
@@ -225,13 +274,14 @@ class Match {
   }
 
   botTuning() {
+    if (this.zombies) return SQUAD_BOT_TUNING;
     if (this.mode === "fun") return FUN_BOT_TUNING;
     return BOT_TUNING[this.mapId];
   }
 
   hazardNow() {
     const elapsed = this.elapsed();
-    const ms = this.mode === "fun" ? elapsed * FUN_HAZARD_TIME_SCALE : elapsed;
+    const ms = this.zombies ? 0 : this.mode === "fun" ? elapsed * FUN_HAZARD_TIME_SCALE : elapsed;
     return mapGen.hazardAt(this.mapId, ms);
   }
 
@@ -337,6 +387,116 @@ class Match {
       const spot = mapGen.randomLandSpot(this.map, this.rand);
       this.createBb(def, "wild", 0, spot.x, spot.z, mapGen.terrainHeight(this.map, spot.x, spot.z));
     }
+  }
+
+  squadAlive() {
+    return this.players.filter((p) => p.alive && !p.zombie);
+  }
+
+  isEnemy(a, b) {
+    if (!a || !b || a === b) return false;
+    return this.zombies ? Boolean(a.zombie) !== Boolean(b.zombie) : true;
+  }
+
+  zombieSpawnSpot(anchor) {
+    for (let i = 0; i < 30; i += 1) {
+      const angle = this.rand() * Math.PI * 2;
+      const dist = ZOMBIE_SPAWN_MIN + this.rand() * (ZOMBIE_SPAWN_MAX - ZOMBIE_SPAWN_MIN);
+      const x = anchor.x + Math.cos(angle) * dist;
+      const z = anchor.z + Math.sin(angle) * dist;
+      if (Math.hypot(x, z) > mapGen.COAST_RADIUS - 5) continue;
+      if (mapGen.terrainHeight(this.map, x, z) < 1.5 || mapGen.buildingAt(this.map, x, z)) continue;
+      if (this.squadAlive().some((p) => Math.hypot(p.x - x, p.z - z) < ZOMBIE_SPAWN_MIN * 0.7)) continue;
+      return { x, z };
+    }
+    return mapGen.randomLandSpot(this.map, this.rand);
+  }
+
+  spawnZombieWave(now) {
+    const squad = this.squadAlive();
+    if (!squad.length) return;
+    this.wave += 1;
+    this.nextWaveAt = now + ZOMBIE_WAVE_MS;
+    const stats = zombieWaveStats(this.wave);
+    const alive = this.players.filter((p) => p.alive && p.zombie).length;
+    const count = Math.max(0, Math.min(stats.count, ZOMBIE_MAX_ALIVE - alive));
+    for (let i = 0; i < count; i += 1) {
+      const spot = this.zombieSpawnSpot(squad[Math.floor(this.rand() * squad.length)]);
+      const zombie = this.addPlayer("Zombie", AVATAR_IDS[Math.floor(this.rand() * AVATAR_IDS.length)], {}, null);
+      zombie.x = spot.x;
+      zombie.z = spot.z;
+      zombie.y = mapGen.terrainHeight(this.map, spot.x, spot.z);
+      zombie.hp = stats.hp;
+      zombie.maxHp = stats.hp;
+      zombie.bot = null;
+      zombie.zombie = { speed: stats.speed * (0.85 + this.rand() * 0.3), damage: stats.damage, nextAttackAt: 0, stuckAt: 0, lastPos: null, detourUntil: 0, detour: 0 };
+      this.events.push({ k: "spawn", id: zombie.id, name: zombie.name, avatar: zombie.avatar, zombie: 1 });
+    }
+    this.players.forEach((p) => {
+      if (p.ws && !p.zombie) send(p.ws, { t: "notice", text: `Wave ${this.wave}! ${count} zombies incoming` });
+    });
+  }
+
+  zombieThink(p, now) {
+    const z = p.zombie;
+    p.input.attack = false;
+    p.input.jump = false;
+    let target = null;
+    let best = Infinity;
+    this.players.forEach((other) => {
+      if (!other.alive || other.zombie) return;
+      const d = Math.hypot(other.x - p.x, other.z - p.z);
+      if (d < best) {
+        best = d;
+        target = other;
+      }
+    });
+    if (!target) {
+      p.input.mx = 0;
+      p.input.mz = 0;
+      return;
+    }
+    const vehicle = this.vehicleOf(target);
+    const tx = vehicle ? vehicle.x : target.x;
+    const tz = vehicle ? vehicle.z : target.z;
+    const reach = ZOMBIE_ATTACK_RANGE + (vehicle ? data.VEHICLES[vehicle.kind].radius : 0);
+    const dist = Math.hypot(tx - p.x, tz - p.z) || 1;
+    p.input.yaw = Math.atan2(tx - p.x, tz - p.z);
+    if (now > z.stuckAt) {
+      if (z.lastPos && Math.hypot(p.x - z.lastPos.x, p.z - z.lastPos.z) < 0.8 && dist > reach) {
+        const door = this.nearestDoor(p);
+        if (door && !door.open && !door.broken) {
+          door.broken = true;
+          door.open = true;
+          this.events.push({ k: "break", kind: "door", id: door.id });
+        }
+        z.detourUntil = now + 1000;
+        z.detour = (this.rand() < 0.5 ? -1 : 1) * (1 + this.rand());
+        p.input.jump = true;
+      }
+      z.lastPos = { x: p.x, z: p.z };
+      z.stuckAt = now + 1200;
+    }
+    if (dist <= reach) {
+      p.input.mx = 0;
+      p.input.mz = 0;
+      if (now >= z.nextAttackAt && Math.abs(target.y - p.y) < 2.5) {
+        z.nextAttackAt = now + ZOMBIE_ATTACK_MS;
+        p.swingUntil = now + 250;
+        if (vehicle) this.damageVehicle(vehicle, z.damage, p);
+        else this.damagePlayer(target, z.damage, p);
+      }
+      return;
+    }
+    let ax = (tx - p.x) / dist;
+    let az = (tz - p.z) / dist;
+    if (now < z.detourUntil) {
+      const c = Math.cos(z.detour);
+      const s = Math.sin(z.detour);
+      [ax, az] = [ax * c - az * s, ax * s + az * c];
+    }
+    p.input.mx = ax;
+    p.input.mz = az;
   }
 
   bbHostileTo(bb, playerId) {
@@ -738,7 +898,7 @@ class Match {
     const piles = [...this.loot.values()].filter((entry) => data.isResourceName(entry.item));
     if (!piles.length) return;
     this.players.forEach((p) => {
-      if (!p.alive || p.riding) return;
+      if (!p.alive || p.riding || p.zombie) return;
       piles.forEach((entry) => {
         if (!this.loot.has(entry.id) || Math.abs(entry.y - p.y) > 2) return;
         if (Math.hypot(entry.x - p.x, entry.z - p.z) <= RESOURCE_COLLECT_RANGE) this.collectResource(p, entry);
@@ -772,6 +932,7 @@ class Match {
 
   damagePlayer(target, amount, sourcePlayer, opts = {}) {
     if (!target.alive || amount <= 0 || target.vehicle) return;
+    if (sourcePlayer && !this.isEnemy(sourcePlayer, target)) return;
     if (sourcePlayer && this.elapsed() < SPAWN_PROTECT_MS) return;
     const defense = opts.ignoreDefense ? 0 : this.playerDefense(target);
     const dealt = Math.max(amount * 0.15, amount - defense);
@@ -844,8 +1005,24 @@ class Match {
     this.events.push({ k: "loot+", ...entry });
   }
 
+  eliminateZombie(p, killer) {
+    p.alive = false;
+    if (killer && !killer.zombie && killer.alive) {
+      killer.coins += ZOMBIE_KILL_COINS;
+      killer.kills += 1;
+    }
+    this.events.push({ k: "kill", a: killer && !killer.zombie ? killer.id : 0, b: p.id, cause: "Zombie down" });
+    const roll = this.rand();
+    if (roll < 0.12) this.dropLoot(p.x, p.z, rollLoot(this.rand), p.y);
+    else if (roll < 0.4) this.dropResources(p.x, p.z, p.y, this.rand() < 0.5 ? { wood: 2 } : { metal: 2 });
+  }
+
   eliminate(p, killer, cause) {
     if (!p.alive) return;
+    if (p.zombie) {
+      this.eliminateZombie(p, killer);
+      return;
+    }
     const place = this.aliveCount();
     if (p.vehicle) this.exitVehicle(p, this.vehicleOf(p));
     p.alive = false;
@@ -867,6 +1044,10 @@ class Match {
     }
     this.events.push({ k: "kill", a: killer && killer !== p ? killer.id : 0, b: p.id, cause });
     this.finishPlayer(p, killer && killer !== p ? killer.name : cause);
+    if (this.zombies) {
+      if (!this.squadAlive().some((entry) => !entry.bot)) this.end();
+      return;
+    }
     const remaining = this.players.filter((entry) => entry.alive);
     if (remaining.length === 1) {
       const winner = remaining[0];
@@ -880,6 +1061,22 @@ class Match {
 
   finishPlayer(p, killedBy) {
     if (!p.ws) return;
+    if (this.zombies) {
+      const survivedMs = this.elapsed();
+      send(p.ws, {
+        t: "end",
+        mode: this.mode,
+        map: this.mapId,
+        kills: p.kills,
+        killedBy,
+        survivedMs,
+        wave: this.wave,
+        reward: zombieReward(survivedMs, this.wave),
+        diamonds: 0
+      });
+      p.ws.matchPlayer = null;
+      return;
+    }
     const reward = this.mode === "fun"
       ? 0
       : this.mode === "competitive"
@@ -931,7 +1128,7 @@ class Match {
     p.disconnectedAt = 0;
     conn.match = this;
     conn.ws.matchPlayer = p;
-    const roster = this.players.map((entry) => ({ id: entry.id, name: entry.name, avatar: entry.avatar, skin: entry.skin, bot: Boolean(entry.bot) }));
+    const roster = this.players.map((entry) => ({ id: entry.id, name: entry.name, avatar: entry.avatar, skin: entry.skin, bot: Boolean(entry.bot), zombie: entry.zombie ? 1 : 0 }));
     send(conn.ws, {
       t: "start",
       matchId: this.id,
@@ -1184,7 +1381,7 @@ class Match {
       p.sprintActiveUntil = 0;
       p.sprintCooldownUntil = now + SPRINT_COOLDOWN_MS;
     }
-    let speed = PLAYER_SPEED;
+    let speed = p.zombie ? p.zombie.speed : PLAYER_SPEED;
     if (p.sprintActiveUntil) {
       if (sprintHeld && now < p.sprintActiveUntil) speed *= SPRINT_BOOST;
       else if (now >= p.sprintActiveUntil) {
@@ -1306,7 +1503,7 @@ class Match {
     let target = null;
     let best = 22;
     this.players.forEach((other) => {
-      if (!other.alive || other.id === bb.owner) return;
+      if (!other.alive || other.id === bb.owner || !this.isEnemy(owner, other)) return;
       const d = Math.hypot(other.x - bb.x, other.z - bb.z);
       if (d < best && Math.hypot(other.x - owner.x, other.z - owner.z) < 30) {
         best = d;
@@ -1467,7 +1664,7 @@ class Match {
         }
       }
       for (const target of this.players) {
-        if (!target.alive || target.id === proj.owner || target.vehicle) continue;
+        if (!target.alive || target.id === proj.owner || target.vehicle || (owner && !this.isEnemy(owner, target))) continue;
         const hit = closest(target.x, target.z);
         if (hit.d < 0.9 && hit.y > target.y - 0.2 && hit.y < target.y + 2.2) {
           if (owner) this.applyWeaponHit(owner, proj.item, proj.damage, target, null);
@@ -1583,14 +1780,14 @@ class Match {
     let enemy = null;
     let enemyDist = now < SPAWN_PROTECT_MS ? 0 : this.botTuning().engageRange;
     this.players.forEach((other) => {
-      if (other === p || !other.alive) return;
+      if (!other.alive || !this.isEnemy(p, other)) return;
       const d = Math.hypot(other.x - p.x, other.z - p.z);
       if (d < enemyDist) {
         enemyDist = d;
         enemy = other;
       }
     });
-    if (!enemy) {
+    if (!enemy && !this.zombies) {
       this.bbs.forEach((bb) => {
         if (!bb.alive || bb.owner === p.id) return;
         const d = Math.hypot(bb.x - p.x, bb.z - p.z);
@@ -1617,6 +1814,15 @@ class Match {
       }
       if (enemyDist <= (ranged ? ranged.range : data.MELEE_RANGE)) p.input.attack = true;
       return;
+    }
+
+    if (this.zombies) {
+      const leader = this.players.find((other) => other.alive && !other.zombie && !other.bot);
+      if (leader && Math.hypot(leader.x - p.x, leader.z - p.z) > BOT_FOLLOW_RANGE) {
+        p.input.yaw = Math.atan2(leader.x - p.x, leader.z - p.z);
+        goTo(leader.x, leader.z);
+        return;
+      }
     }
 
     if (p.inv.some((item) => !item)) {
@@ -1681,10 +1887,22 @@ class Match {
         return;
       }
       if (p.disconnectedAt) p.disconnectedAt = 0;
+      if (p.zombie) {
+        this.zombieThink(p, now);
+        this.movePlayer(p, dt, now);
+        return;
+      }
       if (p.bot) this.botThink(p, hazard, now);
       this.movePlayer(p, dt, now);
       if (p.input.attack && now >= p.stunUntil) this.attack(p, now);
     });
+    if (this.zombies && !this.finished) {
+      const zombiesLeft = this.players.some((p) => p.alive && p.zombie);
+      if (now >= this.nextWaveAt || (this.wave > 0 && !zombiesLeft && now < this.nextWaveAt - 8000)) {
+        if (now >= this.nextWaveAt) this.spawnZombieWave(now);
+        else this.nextWaveAt = now + 8000;
+      }
+    }
     this.vehicles.forEach((v) => {
       v.seats.forEach((id) => {
         const occupant = id ? this.playerById(id) : null;
@@ -1696,6 +1914,7 @@ class Match {
     this.hazardTick(hazard, dt, now);
     this.autoCollectResources();
     this.bbs = this.bbs.filter((bb) => bb.alive);
+    if (this.zombies) this.players = this.players.filter((p) => p.alive || !p.zombie);
     this.broadcast();
   }
 
@@ -1714,7 +1933,10 @@ class Match {
     const rocks = this.rocks.map((rock) => [rock.id, rock.x, rock.z, rock.hitAt - now]);
     const events = this.events;
     this.events = [];
-    const alive = players.length;
+    const alive = this.zombies ? this.squadAlive().length : players.length;
+    const zw = this.zombies
+      ? [this.wave, this.players.filter((p) => p.alive && p.zombie).length, Math.max(0, this.nextWaveAt - now)]
+      : null;
     this.players.forEach((p) => {
       if (!p.ws || p.ws.matchPlayer !== p) return;
       const myBbs = this.bbs.filter((bb) => bb.owner === p.id).map((bb) => [bb.name, Math.ceil(bb.hp), bb.maxHp]);
@@ -1722,6 +1944,7 @@ class Match {
         t: "snap",
         e: now,
         alive,
+        zw,
         players,
         bbs,
         vehicles,
@@ -1847,6 +2070,7 @@ function createMatchServer({ wss, verifyAccount, awardStars, coopStore }) {
     const previous = onlineByKey.get(key);
     if (previous && previous !== conn && previous.ws.readyState === 1) previous.ws.close();
     onlineByKey.set(key, conn);
+    pushParty(conn);
     coopTask(conn, async () => {
       await pushCoop(conn);
       const me = await coopStore.find(key);
@@ -1933,6 +2157,162 @@ function createMatchServer({ wss, verifyAccount, awardStars, coopStore }) {
     });
   }
 
+  const parties = new Map();
+
+  function partyFor(conn) {
+    return conn.party && parties.get(conn.party.hostKey) === conn.party ? conn.party : null;
+  }
+
+  function partyState(conn) {
+    const key = coopUserKey(conn.username);
+    const party = partyFor(conn);
+    const invites = [];
+    parties.forEach((entry) => {
+      if (entry.invited.has(key) && entry !== party) invites.push({ from: entry.members[0].username });
+    });
+    return {
+      t: "party",
+      party: party
+        ? {
+            host: party.members[0].username,
+            isHost: party.members[0] === conn,
+            members: party.members.map((member) => member.username),
+            invited: [...party.invited].map((invitedKey) => onlineByKey.get(invitedKey)?.username || invitedKey)
+          }
+        : null,
+      invites
+    };
+  }
+
+  function pushParty(conn) {
+    if (conn && conn.username) send(conn.ws, partyState(conn));
+  }
+
+  function pushPartyAll(party) {
+    party.members.forEach(pushParty);
+    party.invited.forEach((key) => pushParty(onlineByKey.get(key)));
+  }
+
+  function leaveParty(conn, disbandText) {
+    const party = partyFor(conn);
+    conn.party = null;
+    if (!party) return;
+    if (party.members[0] === conn) {
+      parties.delete(party.hostKey);
+      party.members.slice(1).forEach((member) => {
+        member.party = null;
+        send(member.ws, { t: "coop-notice", text: disbandText || `${conn.username} closed the squad.` });
+        pushParty(member);
+      });
+      party.invited.forEach((key) => pushParty(onlineByKey.get(key)));
+      return;
+    }
+    party.members = party.members.filter((member) => member !== conn);
+    party.members.forEach((member) => send(member.ws, { t: "coop-notice", text: `${conn.username} left the squad.` }));
+    pushPartyAll(party);
+  }
+
+  function ensureParty(conn) {
+    const existing = partyFor(conn);
+    if (existing) return existing;
+    const party = { hostKey: coopUserKey(conn.username), members: [conn], invited: new Set() };
+    parties.set(party.hostKey, party);
+    conn.party = party;
+    return party;
+  }
+
+  function handleBattleInvite(conn, toName) {
+    const toKey = coopUserKey(toName);
+    coopTask(conn, async () => {
+      const me = await coopStore.find(coopUserKey(conn.username));
+      if (!me || !hasName(me.coopFriends, toName)) {
+        send(conn.ws, { t: "coop-notice", text: "You can only send battle requests to friends." });
+        return;
+      }
+      const target = onlineByKey.get(toKey);
+      if (!target) {
+        send(conn.ws, { t: "coop-notice", text: `${toName} is offline. Battle requests only work when they're online.` });
+        return;
+      }
+      const current = partyFor(conn);
+      if (current && current.members[0] !== conn) {
+        send(conn.ws, { t: "coop-notice", text: "Only the squad leader can send battle requests." });
+        return;
+      }
+      const party = ensureParty(conn);
+      if (party.members.some((member) => member === target)) {
+        send(conn.ws, { t: "coop-notice", text: `${target.username} is already on your squad.` });
+        return;
+      }
+      if (party.members.length + party.invited.size >= SQUAD_SIZE) {
+        send(conn.ws, { t: "coop-notice", text: `Squads hold ${SQUAD_SIZE} players.` });
+        return;
+      }
+      party.invited.add(toKey);
+      send(conn.ws, { t: "coop-notice", text: `Battle request sent to ${target.username}.` });
+      send(target.ws, { t: "coop-notice", text: `${conn.username} sent you a battle request! Open Co-op → Play to join.` });
+      pushPartyAll(party);
+    });
+  }
+
+  function handleBattleAccept(conn, hostName) {
+    const party = parties.get(coopUserKey(hostName));
+    const key = coopUserKey(conn.username);
+    if (!party || !party.invited.has(key)) {
+      send(conn.ws, { t: "coop-notice", text: "That battle request expired." });
+      pushParty(conn);
+      return;
+    }
+    if (party.members.length >= SQUAD_SIZE) {
+      send(conn.ws, { t: "coop-notice", text: "That squad is full." });
+      return;
+    }
+    leaveParty(conn);
+    party.invited.delete(key);
+    party.members.push(conn);
+    conn.party = party;
+    party.members.forEach((member) => {
+      if (member !== conn) send(member.ws, { t: "coop-notice", text: `${conn.username} joined the squad!` });
+    });
+    send(conn.ws, { t: "coop-notice", text: `You joined ${party.members[0].username}'s squad. Waiting for them to start.` });
+    pushPartyAll(party);
+  }
+
+  function handleBattleDecline(conn, hostName) {
+    const party = parties.get(coopUserKey(hostName));
+    if (party && party.invited.delete(coopUserKey(conn.username))) {
+      send(party.members[0].ws, { t: "coop-notice", text: `${conn.username} declined the battle request.` });
+      pushPartyAll(party);
+    }
+    pushParty(conn);
+  }
+
+  function handleSquadStart(conn, withBots) {
+    const party = partyFor(conn);
+    if (party && party.members[0] !== conn) {
+      send(conn.ws, { t: "coop-notice", text: "Only the squad leader can start." });
+      return;
+    }
+    const members = party ? party.members.filter((member) => member.ws.readyState === 1 && !member.match) : [conn];
+    if (party) {
+      parties.delete(party.hostKey);
+      party.invited.forEach((key) => {
+        const invitee = onlineByKey.get(key);
+        if (invitee) pushParty(invitee);
+      });
+    }
+    members.forEach((member) => {
+      member.party = null;
+      leaveQueue(member);
+    });
+    try {
+      startMatch("zombies", "island", members, withBots ? SQUAD_SIZE - members.length : 0);
+    } catch (error) {
+      console.error("startMatch failed:", error);
+      members.forEach((member) => send(member.ws, { t: "coop-notice", text: "Could not start the zombie match. Try again." }));
+    }
+  }
+
   function joinQueue(conn, mode, map) {
     leaveQueue(conn);
     const key = queueKey(mode, map);
@@ -1960,9 +2340,9 @@ function createMatchServer({ wss, verifyAccount, awardStars, coopStore }) {
     return null;
   }
 
-  function startMatch(mode, map, members) {
+  function startMatch(mode, map, members, teamBots = 0) {
     members.forEach((conn) => { conn.queueKey = ""; });
-    const match = new Match(matchCounter++, mode, map, members, (done) => matches.delete(done), awardStars);
+    const match = new Match(matchCounter++, mode, map, members, (done) => matches.delete(done), awardStars, teamBots);
     matches.add(match);
     members.forEach((conn) => {
       conn.match = match;
@@ -2065,10 +2445,32 @@ function createMatchServer({ wss, verifyAccount, awardStars, coopStore }) {
         handleFriendRequest(conn, msg.to);
       } else if (msg.t === "friendAccept") {
         handleFriendAccept(conn, msg.from);
+      } else if (msg.t === "battleInvite") {
+        handleBattleInvite(conn, String(msg.to || "").trim());
+      } else if (msg.t === "battleAccept") {
+        handleBattleAccept(conn, String(msg.from || ""));
+      } else if (msg.t === "battleDecline") {
+        handleBattleDecline(conn, String(msg.from || ""));
+      } else if (msg.t === "squadLeave") {
+        leaveParty(conn);
+        pushParty(conn);
+      } else if (msg.t === "squadStart") {
+        handleSquadStart(conn, Boolean(msg.bots));
+      } else if (msg.t === "partyState") {
+        pushParty(conn);
       }
     });
     ws.on("close", () => {
       leaveQueue(conn);
+      if (conn.username) {
+        const key = coopUserKey(conn.username);
+        leaveParty(conn, `${conn.username} disconnected, so the squad closed.`);
+        if (onlineByKey.get(key) === conn) {
+          parties.forEach((party) => {
+            if (party.invited.delete(key)) pushPartyAll(party);
+          });
+        }
+      }
       unregisterOnline(conn);
       if (conn.match) conn.match.disconnect(ws);
     });

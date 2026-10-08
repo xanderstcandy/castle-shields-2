@@ -86,7 +86,9 @@ const state = {
   coopIncoming: [],
   coopOutgoing: [],
   coopNotice: "",
-  coopDraft: ""
+  coopDraft: "",
+  coopParty: null,
+  coopBattleInvites: []
 };
 
 const REWARDS_WHEEL_SEGMENTS = [
@@ -1768,7 +1770,7 @@ let coopSocket = null;
 let coopReady = false;
 
 function isCoopScreen() {
-  return state.screen === "coop" || state.screen === "coop-friend" || state.screen === "coop-friends";
+  return state.screen === "coop" || state.screen === "coop-friend" || state.screen === "coop-friends" || state.screen === "coop-play";
 }
 
 function closeCoopSocket() {
@@ -1839,10 +1841,41 @@ function handleCoopMessage(msg) {
     if (isCoopScreen()) render();
     return;
   }
+  if (msg.t === "party") {
+    state.coopParty = msg.party || null;
+    state.coopBattleInvites = Array.isArray(msg.invites) ? msg.invites : [];
+    if (isCoopScreen()) render();
+    return;
+  }
   if (msg.t === "coop-notice") {
     state.coopNotice = String(msg.text || "");
     if (isCoopScreen()) render();
+    return;
   }
+  if (msg.t === "start" && coopSocket) {
+    const socket = coopSocket;
+    coopSocket = null;
+    coopReady = false;
+    if (matchSocket && matchSocket !== socket) closeMatchSocket();
+    clearPlayBotsWatchdog();
+    matchLeaveIntent = false;
+    matchDropAuthed = true;
+    state.coopParty = null;
+    state.matchQueue = { mode: "zombies", map: "island", count: 0, needed: 0, waitMs: 0, status: "Starting zombie survival..." };
+    bindMatchSocket(socket);
+    handleMatchMessage(msg);
+  }
+}
+
+function sendCoop(payload) {
+  if (!coopSocket || coopSocket.readyState !== WebSocket.OPEN) {
+    state.coopNotice = "Connecting to co-op… try again in a moment.";
+    ensureCoopSocket();
+    render();
+    return false;
+  }
+  coopSocket.send(JSON.stringify(payload));
+  return true;
 }
 
 function sendCoopFriendRequest(username) {
@@ -2133,7 +2166,7 @@ function handleMatchMessage(msg) {
     }
   } else if (msg.t === "end") {
     finishMatch(msg);
-  } else if (msg.t === "coop" || msg.t === "coop-notice") {
+  } else if (msg.t === "coop" || msg.t === "coop-notice" || msg.t === "party") {
     handleCoopMessage(msg);
   } else if (window.BBGame && state.screen === "match") {
     window.BBGame.handleMessage(msg);
@@ -2143,9 +2176,10 @@ function handleMatchMessage(msg) {
 async function finishMatch(result) {
   if (window.BBGame) window.BBGame.stop();
   closeMatchSocket();
-  if ((result.mode === "competitive" && result.reward > 0) || result.diamonds > 0) {
+  const coinReward = (result.mode === "competitive" || result.mode === "zombies") && result.reward > 0;
+  if (coinReward || result.diamonds > 0) {
     syncShopWalletFromStorage();
-    if (result.mode === "competitive") state.shopCoins += result.reward;
+    if (coinReward) state.shopCoins += result.reward;
     state.shopDiamonds += result.diamonds || 0;
     persistShopWallet();
   }
@@ -2202,8 +2236,37 @@ function renderMatch() {
   template(`<div class="match-root" data-match-root></div>`, "match-screen");
 }
 
+function formatSurvival(ms) {
+  const total = Math.floor(Math.max(0, ms) / 1000);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
+function renderZombieResult(result) {
+  const coins = result.reward > 0 ? `+${result.reward} ${result.reward === 1 ? "coin" : "coins"}` : "No coins this time — survive longer!";
+  renderScene(renderCard(`
+    <header class="drop-head hub-head">
+      <div class="drop-crest">${crestSvg()}</div>
+      <p class="drop-kicker">B.B <span>Zombie Survival</span></p>
+      <h1 class="drop-title drop-title-compact">Overrun!</h1>
+      <p class="drop-tagline">Survived ${formatSurvival(result.survivedMs)} · reached wave ${result.wave || 0}</p>
+    </header>
+    <div class="queue-panel result-panel">
+      <p class="result-reward">${escapeHtml(coins)}</p>
+      <p class="queue-status">${result.kills} ${result.kills === 1 ? "zombie" : "zombies"} knocked out${result.killedBy ? ` · Taken out by ${escapeHtml(result.killedBy)}` : ""}</p>
+    </div>
+    <button class="drop-button queue-bots" type="button" data-action="coop-play">
+      <span class="button-text">Play Again</span>
+    </button>
+    <button class="drop-button ghost hub-sign-out" type="button" data-action="hub-back">Back to Hub</button>
+  `, "queue-card"));
+}
+
 function renderMatchResult() {
   const result = state.matchResult;
+  if (result.mode === "zombies") {
+    renderZombieResult(result);
+    return;
+  }
   const rewards = [];
   if (result.reward > 0) rewards.push(result.mode === "competitive" ? `+${result.reward} coins` : `+${formatStars(result.reward)}`);
   if (result.diamonds > 0) rewards.push(`+${result.diamonds} ${result.diamonds === 1 ? "diamond" : "diamonds"}`);
@@ -2240,7 +2303,7 @@ function renderCoopMenu() {
       <div class="drop-crest">${crestSvg()}</div>
       <p class="drop-kicker">B.B <span>Co-op</span></p>
       <h1 class="drop-title drop-title-compact">Squad Up</h1>
-      <p class="drop-tagline">Invite buddies, build your squad, then play together <span class="tagline-mode">(soon)</span></p>
+      <p class="drop-tagline">Invite buddies, build your squad, then survive zombies together <span class="tagline-mode">(for real)</span></p>
     </header>
     ${coopNoticeHtml()}
     <nav class="coop-menu" aria-label="Co-op steps">
@@ -2254,7 +2317,7 @@ function renderCoopMenu() {
       </button>
       <button class="drop-button coop-step coop-step-play" type="button" data-action="coop-play">
         <span class="button-text">Play</span>
-        <span class="coop-step-hint">Coming soon</span>
+        <span class="coop-step-hint">Zombie survival${state.coopBattleInvites.length ? ` · ${state.coopBattleInvites.length} battle request${state.coopBattleInvites.length > 1 ? "s" : ""}` : ""}</span>
       </button>
     </nav>
     <button class="drop-button ghost hub-sign-out" type="button" data-action="battle-back">Back to Drop Zone</button>
@@ -2294,6 +2357,83 @@ function renderCoopFriend() {
     </form>
     ${incoming ? `<section class="coop-panel"><h2 class="coop-panel-title">Incoming</h2><ul class="coop-request-list">${incoming}</ul></section>` : ""}
     ${outgoing ? `<section class="coop-panel"><h2 class="coop-panel-title">Sent</h2><ul class="coop-request-list">${outgoing}</ul></section>` : ""}
+    <button class="drop-button ghost hub-sign-out" type="button" data-action="coop-back">Back to Co-op</button>
+    ${liveBar()}
+  `));
+}
+
+function renderCoopPlay() {
+  ensureCoopSocket();
+  const party = state.coopParty;
+  const isHost = !party || party.isHost;
+  const memberKeys = new Set((party?.members || []).map((name) => name.toLowerCase()));
+  const invitedKeys = new Set((party?.invited || []).map((name) => name.toLowerCase()));
+  const invites = state.coopBattleInvites.map((row) => `
+    <li class="coop-request">
+      <span class="coop-request-name">${escapeHtml(row.from)} <span class="coop-pending-label">wants you on their squad</span></span>
+      <span class="coop-request-actions">
+        <button class="drop-button coop-accept" type="button" data-action="battle-accept" data-from="${escapeHtml(row.from)}">Join</button>
+        <button class="drop-button ghost coop-accept" type="button" data-action="battle-decline" data-from="${escapeHtml(row.from)}">No</button>
+      </span>
+    </li>
+  `).join("");
+  const squadRows = party
+    ? party.members.map((name, index) => `
+      <li class="coop-squad-member">
+        <span class="coop-squad-badge" aria-hidden="true">${modeIcons.coop}</span>
+        <span class="coop-squad-name">${escapeHtml(name)}${name.toLowerCase() === state.username.toLowerCase() ? " (you)" : ""}</span>
+        <span class="coop-squad-status">${index === 0 ? "Leader" : "Ready"}</span>
+      </li>
+    `).join("") + party.invited.map((name) => `
+      <li class="coop-squad-member coop-squad-member--offline">
+        <span class="coop-squad-badge" aria-hidden="true">${modeIcons.coop}</span>
+        <span class="coop-squad-name">${escapeHtml(name)}</span>
+        <span class="coop-squad-status">Request sent…</span>
+      </li>
+    `).join("")
+    : `<li class="coop-squad-empty">Just you so far. Send a battle request below or play with bot teammates.</li>`;
+  const friendRows = state.coopFriends.length
+    ? state.coopFriends.map((friend) => {
+      const key = friend.name.toLowerCase();
+      let control = `<button class="drop-button coop-accept" type="button" data-action="battle-invite" data-to="${escapeHtml(friend.name)}">Battle Request</button>`;
+      if (memberKeys.has(key)) control = `<span class="coop-pending-label">On your squad</span>`;
+      else if (invitedKeys.has(key)) control = `<span class="coop-pending-label">Request sent…</span>`;
+      else if (!friend.online) control = `<span class="coop-pending-label">Offline</span>`;
+      else if (!isHost) control = "";
+      return `
+        <li class="coop-request${friend.online ? "" : " coop-request--pending"}">
+          <span class="coop-request-name">${escapeHtml(friend.name)}</span>
+          ${control}
+        </li>
+      `;
+    }).join("")
+    : `<li class="coop-squad-empty">No friends yet. Add some from the <strong>Friend</strong> screen.</li>`;
+  const squadSize = party ? party.members.length : 1;
+  const controls = isHost
+    ? `
+      <button class="drop-button queue-bots" type="button" data-action="squad-start" data-bots="1">
+        <span class="button-text">Play with Bots</span>
+      </button>
+      <button class="drop-button" type="button" data-action="squad-start" data-bots="0">
+        <span class="button-text">${squadSize > 1 ? `Start with Squad (${squadSize})` : "Start Solo"}</span>
+      </button>
+      ${party ? `<button class="drop-button ghost" type="button" data-action="squad-leave">Close Squad</button>` : ""}
+    `
+    : `
+      <p class="queue-status">Waiting for ${escapeHtml(party.host)} to start…</p>
+      <button class="drop-button ghost" type="button" data-action="squad-leave">Leave Squad</button>
+    `;
+  renderScene(renderCard(`
+    <header class="drop-head hub-head">
+      <p class="drop-kicker">Co-op · <span>Play</span></p>
+      <h1 class="drop-title drop-title-compact">Zombie Survival</h1>
+      <p class="drop-tagline">You and your squad vs. endless zombie waves. Last longer for more coins.</p>
+    </header>
+    ${coopNoticeHtml()}
+    ${invites ? `<section class="coop-panel"><h2 class="coop-panel-title">Battle Requests</h2><ul class="coop-request-list">${invites}</ul></section>` : ""}
+    <section class="coop-panel"><h2 class="coop-panel-title">Your Squad (${squadSize}/4)</h2><ul class="coop-squad-list">${squadRows}</ul></section>
+    <div class="coop-play-controls">${controls}</div>
+    <section class="coop-panel"><h2 class="coop-panel-title">Friends</h2><ul class="coop-request-list">${friendRows}</ul></section>
     <button class="drop-button ghost hub-sign-out" type="button" data-action="coop-back">Back to Co-op</button>
     ${liveBar()}
   `));
@@ -3566,6 +3706,8 @@ function render() {
     renderCoopFriend();
   } else if (state.screen === "coop-friends") {
     renderCoopFriends();
+  } else if (state.screen === "coop-play") {
+    renderCoopPlay();
   } else if (state.screen === "queue") {
     renderQueue();
   } else if (state.screen === "match") {
@@ -3924,8 +4066,43 @@ app.addEventListener("click", (event) => {
   }
 
   if (action === "coop-play") {
-    state.coopNotice = "Co-op matches aren't ready yet — squad up with Friend and Friends for now.";
+    state.coopNotice = "";
+    state.screen = "coop-play";
     render();
+    if (coopSocket && coopSocket.readyState === WebSocket.OPEN) coopSocket.send(JSON.stringify({ t: "partyState" }));
+    return;
+  }
+
+  if (action === "battle-invite") {
+    sendCoop({ t: "battleInvite", to: actionTarget.dataset.to || "" });
+    return;
+  }
+
+  if (action === "battle-accept") {
+    sendCoop({ t: "battleAccept", from: actionTarget.dataset.from || "" });
+    return;
+  }
+
+  if (action === "battle-decline") {
+    sendCoop({ t: "battleDecline", from: actionTarget.dataset.from || "" });
+    return;
+  }
+
+  if (action === "squad-leave") {
+    sendCoop({ t: "squadLeave" });
+    return;
+  }
+
+  if (action === "squad-start") {
+    if (!window.BBGame) {
+      state.coopNotice = "3D game still loading. Wait a few seconds, then try again.";
+      render();
+      return;
+    }
+    if (sendCoop({ t: "squadStart", bots: actionTarget.dataset.bots === "1" })) {
+      state.coopNotice = "Starting zombie survival...";
+      render();
+    }
     return;
   }
 
@@ -3954,7 +4131,7 @@ app.addEventListener("click", (event) => {
   }
 
   if (action === "battle-back") {
-    if (state.screen === "coop" || state.screen === "coop-friend" || state.screen === "coop-friends") closeCoopSocket();
+    if (isCoopScreen()) closeCoopSocket();
     state.screen = "battle";
     render();
     return;

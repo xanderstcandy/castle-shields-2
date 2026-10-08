@@ -4,6 +4,7 @@ import { buildWeaponModel, buildPotionModel, buildResourceModel } from "./weapon
 
 const INTERP_DELAY_MS = 100;
 const INPUT_SEND_MS = 50;
+const FUN_HAZARD_TIME_SCALE = 0.35;
 const BB_KIND_GUARD = 1;
 const BB_KIND_WILD = 2;
 const BATTLE_TUTORIAL_MS = 30000;
@@ -143,9 +144,18 @@ function poseArms(buddy, swing, attacking, now) {
   if (hold === "gun" && buddy.heldModel) buddy.heldModel.rotation.x = -armX;
 }
 
-function buildBuddy(avatar, skinId) {
-  const look = AVATAR_LOOKS[avatar] || AVATAR_LOOKS["boy-1"];
-  const outfit = skinId ? findSkin(skinId) : null;
+const ZOMBIE_LOOK = {
+  skin: [0x7fa35a],
+  hair: [0x2f3b22],
+  outfit: [0x5b4a3a],
+  pants: [0x343a4a],
+  shoe: 0x1f1f1f
+};
+
+function buildBuddy(avatar, skinId, zombie = false) {
+  const base = AVATAR_LOOKS[avatar] || AVATAR_LOOKS["boy-1"];
+  const look = zombie ? { ...base, ...ZOMBIE_LOOK } : base;
+  const outfit = skinId && !zombie ? findSkin(skinId) : null;
   const materials = [];
   const mat = (color, glow = 0, glowColor = outfit?.glow) => {
     const material = new THREE.MeshLambertMaterial({ color });
@@ -206,7 +216,7 @@ function buildBuddy(avatar, skinId) {
     longHair.position.set(0, 1.6, -0.24);
     group.add(longHair);
   }
-  const eyeMat = new THREE.MeshBasicMaterial({ color: 0x111827 });
+  const eyeMat = new THREE.MeshBasicMaterial({ color: zombie ? 0xef4444 : 0x111827 });
   [-0.1, 0.1].forEach((x) => {
     const eye = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.08, 0.02), eyeMat);
     eye.position.set(x, 1.8, 0.225);
@@ -1731,13 +1741,14 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
   function ensurePlayer(id) {
     if (g.players.has(id)) return g.players.get(id);
     const info = roster.get(id) || { name: "Buddy", avatar: "boy-1" };
-    const buddy = buildBuddy(info.avatar, info.skin);
-    const tag = makeTextSprite(info.name, id === g.myId ? "#86efac" : info.bot ? "#e2e8f0" : "#7dd3fc");
+    const zombie = Boolean(info.zombie);
+    const buddy = buildBuddy(info.avatar, info.skin, zombie);
+    const tag = makeTextSprite(info.name, id === g.myId ? "#86efac" : zombie ? "#f87171" : info.bot ? "#e2e8f0" : "#7dd3fc");
     tag.position.y = 2.75;
     tag.visible = id !== g.myId;
     buddy.group.add(tag);
     scene.add(buddy.group);
-    const entry = { ...buddy, tag, hp: -1, held: null, heldName: "", walk: 0, flashUntil: 0, lastPos: new THREE.Vector3() };
+    const entry = { ...buddy, tag, zombie, hp: -1, held: null, heldName: "", walk: 0, flashUntil: 0, lastPos: new THREE.Vector3() };
     g.players.set(id, entry);
     return entry;
   }
@@ -1881,9 +1892,11 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       else if (ev.k === "chest") openChest(ev.id, ev.rare);
       else if (ev.k === "kill") {
         const victim = nameOf(ev.b);
-        addFeed(ev.a ? `${nameOf(ev.a)} knocked out ${victim}` : `${victim} — ${ev.cause || "out"}`);
+        const zombieDown = Boolean(roster.get(ev.b)?.zombie);
+        if (!zombieDown) addFeed(ev.a ? `${nameOf(ev.a)} knocked out ${victim}` : `${victim} — ${ev.cause || "out"}`);
         const entry = g.players.get(ev.b);
-        if (entry) spawnPoof(entry.group.position.x, entry.group.position.y + 1, entry.group.position.z, 0xffffff, 2);
+        if (entry) spawnPoof(entry.group.position.x, entry.group.position.y + 1, entry.group.position.z, zombieDown ? 0x84cc16 : 0xffffff, 2);
+        if (zombieDown) roster.delete(ev.b);
       } else if (ev.k === "hit") {
         const p = g.players.get(ev.id);
         if (p) p.flashUntil = performance.now() + 140;
@@ -1943,6 +1956,8 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
         if (mesh) tintBlock(mesh, ev.hp);
       } else if (ev.k === "block-") {
         removeBlock(ev.id, true);
+      } else if (ev.k === "spawn") {
+        roster.set(ev.id, { id: ev.id, name: ev.name, avatar: ev.avatar, zombie: ev.zombie, bot: true });
       } else if (ev.k === "vhit") {
         const v = g.vehicles.get(ev.id);
         if (v) v.flashUntil = performance.now() + 140;
@@ -2053,6 +2068,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       g.serverElapsedAt = performance.now();
       g.me = msg.me;
       g.alive = msg.alive;
+      g.zw = msg.zw || null;
       if (g.linkDown) {
         g.linkDown = false;
         g.socketLive = g.socket && g.socket.readyState === WebSocket.OPEN;
@@ -2076,8 +2092,14 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       ? `STUNNED ${(me.stunMs / 1000).toFixed(1)}s`
       : me.protectMs > 0 ? `Spawn protection ${formatMs(me.protectMs)}` : effectText;
     hud("effect").classList.toggle("mh-effect--stun", me.stunMs > 0);
-    hud("map").textContent = BBMapGen.MAP_LABELS[map.id];
-    hud("alive").textContent = `${g.alive} alive`;
+    if (g.zw) {
+      const [wave, zombiesLeft, nextMs] = g.zw;
+      hud("map").textContent = wave ? `Zombie Survival · Wave ${wave}` : "Zombie Survival";
+      hud("alive").textContent = `${zombiesLeft} zombies · next wave ${Math.ceil(nextMs / 1000)}s · ${g.alive} on squad`;
+    } else {
+      hud("map").textContent = BBMapGen.MAP_LABELS[map.id];
+      hud("alive").textContent = `${g.alive} alive`;
+    }
     hud("kills").textContent = `${me.kills} KO`;
     hud("coins").innerHTML = `${shopCoinSvg()} ${me.coins}`;
     const veh = me.veh;
@@ -2435,6 +2457,11 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
         equipHeld(entry, heldName);
       }
       poseArms(entry, swing, row[9] === 1, now);
+      if (entry.zombie) {
+        const lunge = row[9] === 1 ? -0.5 : 0;
+        entry.arms[0].rotation.set(-1.45 + lunge + Math.sin(entry.walk * 0.5) * 0.08, 0, 0);
+        entry.arms[1].rotation.set(-1.45 + lunge - Math.sin(entry.walk * 0.5) * 0.08, 0, 0);
+      }
       entry.stun.visible = row[8] === 1;
       if (entry.stun.visible) entry.stun.rotation.z += dt * 6;
       if (entry.hp !== row[5]) {
@@ -2558,14 +2585,15 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
 
   function updateWorld(now, dt) {
     const elapsed = g.serverElapsed + (now - g.serverElapsedAt);
-    const hazard = BBMapGen.hazardAt(map.id, elapsed);
+    const zombieMode = start.mode === "zombies";
+    const hazard = BBMapGen.hazardAt(map.id, zombieMode ? 0 : start.mode === "fun" ? elapsed * FUN_HAZARD_TIME_SCALE : elapsed);
     g.displayWater += (hazard.waterLevel - g.displayWater) * Math.min(1, dt * 0.8);
     g.displayLava += (hazard.lavaRadius - g.displayLava) * Math.min(1, dt * 0.8);
     water.position.y = g.displayWater + Math.sin(now / 900) * 0.05;
     overlay.material.uniforms.lavaRadius.value = g.displayLava;
     overlay.material.uniforms.time.value = now / 1000;
     const label = hazard.kind === "water" ? "Water rises" : "Lava spreads";
-    hud("hazard").textContent = `${label} in ${formatMs(hazard.nextStepMs)}`;
+    hud("hazard").textContent = zombieMode ? "No rising water — just zombies" : `${label} in ${formatMs(hazard.nextStepMs)}`;
 
     world.chests.forEach((chest) => {
       const glow = chest.userData.glow;

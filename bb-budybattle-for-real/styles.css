@@ -972,6 +972,17 @@ body {
   font-size: 13px;
 }
 
+.coop-request-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.coop-play-controls {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 14px;
+}
+
 .coop-squad-member {
   display: flex;
   align-items: center;
