@@ -449,6 +449,12 @@ function buildHazardOverlay(geometry) {
     depthWrite: false,
     uniforms: {
       lavaRadius: { value: 0 },
+      lavaFill: { value: 0 },
+      safeX: { value: 0 },
+      safeZ: { value: 0 },
+      safeR: { value: BBMapGen.ISLAND_SAFE_RADIUS },
+      islandMode: { value: 0 },
+      islandSpread: { value: BBMapGen.ISLAND_LAVA_SPREAD },
       time: { value: 0 },
       rocks: { value: rocks },
       rockRadius: { value: BBMapGen.ROCK_RADIUS }
@@ -464,13 +470,35 @@ function buildHazardOverlay(geometry) {
     `,
     fragmentShader: `
       uniform float lavaRadius;
+      uniform float lavaFill;
+      uniform float safeX;
+      uniform float safeZ;
+      uniform float safeR;
+      uniform float islandMode;
+      uniform float islandSpread;
       uniform float time;
       uniform vec3 rocks[16];
       uniform float rockRadius;
       varying vec2 vXZ;
       void main() {
         float r = length(vXZ);
-        if (lavaRadius > 0.0 && r < lavaRadius) {
+        if (islandMode > 0.5 && lavaFill > 0.0) {
+          vec2 safe = vec2(safeX, safeZ);
+          float distSafe = length(vXZ - safe);
+          if (distSafe < safeR + 1.5) {
+            float pulse = 0.55 + 0.45 * sin(time * 2.5);
+            gl_FragColor = vec4(0.12, 0.78, 0.32, 0.28 * lavaFill * pulse);
+            return;
+          }
+          if (distSafe >= safeR + (1.0 - lavaFill) * islandSpread) {
+            float wave = sin(vXZ.x * 0.35 + time * 1.7) * sin(vXZ.y * 0.31 - time * 1.3);
+            float edge = smoothstep(safeR + (1.0 - lavaFill) * islandSpread - 4.0, safeR + (1.0 - lavaFill) * islandSpread + 2.0, distSafe);
+            vec3 col = mix(vec3(1.0, 0.32, 0.02), vec3(1.0, 0.82, 0.15), 0.5 + 0.5 * wave);
+            col = mix(col, vec3(0.25, 0.05, 0.02), edge * 0.5);
+            gl_FragColor = vec4(col, 1.0);
+            return;
+          }
+        } else if (lavaRadius > 0.0 && r < lavaRadius) {
           float wave = sin(vXZ.x * 0.35 + time * 1.7) * sin(vXZ.y * 0.31 - time * 1.3);
           float edge = smoothstep(lavaRadius - 4.0, lavaRadius, r);
           vec3 col = mix(vec3(1.0, 0.32, 0.02), vec3(1.0, 0.82, 0.15), 0.5 + 0.5 * wave);
@@ -1507,6 +1535,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
   const terrain = buildTerrain(map);
   scene.add(terrain);
   const overlay = buildHazardOverlay(terrain.geometry);
+  overlay.material.uniforms.islandMode.value = map.id === "island" ? 1 : 0;
   scene.add(overlay);
   const water = new THREE.Mesh(
     new THREE.PlaneGeometry(4000, 4000),
@@ -1585,6 +1614,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     serverElapsed: 0,
     serverElapsedAt: performance.now(),
     displayLava: 0,
+    displayLavaFill: 0,
     displayWater: 0,
     cuts: new Map(),
     cutKey: "",
@@ -2586,14 +2616,28 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
   function updateWorld(now, dt) {
     const elapsed = g.serverElapsed + (now - g.serverElapsedAt);
     const zombieMode = start.mode === "zombies";
-    const hazard = BBMapGen.hazardAt(map.id, zombieMode ? 0 : start.mode === "fun" ? elapsed * FUN_HAZARD_TIME_SCALE : elapsed);
+    const hazard = BBMapGen.hazardAt(map.id, zombieMode ? 0 : start.mode === "fun" ? elapsed * FUN_HAZARD_TIME_SCALE : elapsed, map.seed);
     g.displayWater += (hazard.waterLevel - g.displayWater) * Math.min(1, dt * 0.8);
     g.displayLava += (hazard.lavaRadius - g.displayLava) * Math.min(1, dt * 0.8);
+    g.displayLavaFill += ((hazard.fillT || 0) - g.displayLavaFill) * Math.min(1, dt * 0.8);
     water.position.y = g.displayWater + Math.sin(now / 900) * 0.05;
+    water.visible = map.id !== "island" && g.displayWater > 0.05;
     overlay.material.uniforms.lavaRadius.value = g.displayLava;
+    overlay.material.uniforms.lavaFill.value = g.displayLavaFill;
+    overlay.material.uniforms.safeX.value = hazard.safeX || 0;
+    overlay.material.uniforms.safeZ.value = hazard.safeZ || 0;
+    overlay.material.uniforms.safeR.value = hazard.safeR || BBMapGen.ISLAND_SAFE_RADIUS;
     overlay.material.uniforms.time.value = now / 1000;
-    const label = hazard.kind === "water" ? "Water rises" : "Lava spreads";
-    hud("hazard").textContent = zombieMode ? "No rising water — just zombies" : `${label} in ${formatMs(hazard.nextStepMs)}`;
+    let hazardText;
+    if (zombieMode) hazardText = "No rising water — just zombies";
+    else if (hazard.kind === "islandLava") {
+      hazardText = hazard.fillT >= 1
+        ? "Only the green safe zone remains!"
+        : hazard.fillT > 0
+          ? `Lava floods — green safe zone in ${formatMs(hazard.nextStepMs)}`
+          : `Lava flood begins in ${formatMs(hazard.nextStepMs)}`;
+    } else hazardText = `Lava spreads in ${formatMs(hazard.nextStepMs)}`;
+    hud("hazard").textContent = hazardText;
 
     world.chests.forEach((chest) => {
       const glow = chest.userData.glow;
