@@ -2094,6 +2094,8 @@ function createMatchServer({ wss, verifyAccount, awardStars, coopStore }) {
     await coopStore.saveCoop(coopUserKey(me.username), [...withoutName(me.coopFriends, other.username), other.username], withoutName(me.coopIncoming, other.username));
     await coopStore.saveCoop(coopUserKey(other.username), [...withoutName(other.coopFriends, me.username), me.username], withoutName(other.coopIncoming, me.username));
     await pushCoopKeys([coopUserKey(me.username), coopUserKey(other.username)]);
+    await pushSocial(coopUserKey(me.username));
+    await pushSocial(coopUserKey(other.username));
     const otherConn = onlineByKey.get(coopUserKey(other.username));
     if (otherConn) send(otherConn.ws, { t: "coop-notice", text: `${me.username} joined your co-op squad!` });
     send(onlineByKey.get(coopUserKey(me.username))?.ws, { t: "coop-notice", text: `${other.username} is on your squad.` });
@@ -2313,6 +2315,144 @@ function createMatchServer({ wss, verifyAccount, awardStars, coopStore }) {
     }
   }
 
+  const socialByKey = new Map();
+  const CHAT_MAX_LENGTH = 300;
+  const CHAT_HISTORY = 80;
+  const CHAT_MIN_GAP_MS = 250;
+  const VOICE_KINDS = new Set(["request", "cancel", "accept", "decline", "end", "offer", "answer", "ice"]);
+
+  function chatPairKey(a, b) {
+    return [coopUserKey(a), coopUserKey(b)].sort().join("|");
+  }
+
+  async function pushSocial(key) {
+    const conn = socialByKey.get(key);
+    if (!conn) return;
+    const me = await coopStore.find(key);
+    conn.friendKeys = new Set((me ? me.coopFriends : []).map(coopUserKey));
+    const friends = (me ? me.coopFriends : []).map((name) => {
+      const friend = socialByKey.get(coopUserKey(name));
+      return { name, online: Boolean(friend), inCall: Boolean(friend && friend.callWith) };
+    });
+    send(conn.ws, { t: "social", friends });
+  }
+
+  async function pushSocialToFriendsOf(username) {
+    const me = await coopStore.find(coopUserKey(username));
+    if (!me) return;
+    for (const name of me.coopFriends) await pushSocial(coopUserKey(name));
+  }
+
+  function socialTask(conn, task) {
+    coopChain = coopChain.then(task).catch((error) => {
+      console.error("social update failed:", error);
+      send(conn.ws, { t: "social-notice", text: "Friends chat is having trouble right now." });
+    });
+  }
+
+  function registerSocial(conn) {
+    const key = coopUserKey(conn.username);
+    const previous = socialByKey.get(key);
+    if (previous && previous !== conn) {
+      endCall(previous);
+      socialByKey.delete(key);
+      if (previous.ws.readyState === 1) previous.ws.close();
+    }
+    socialByKey.set(key, conn);
+    socialTask(conn, async () => {
+      await pushSocial(key);
+      await pushSocialToFriendsOf(conn.username);
+    });
+  }
+
+  function unregisterSocial(conn) {
+    const key = coopUserKey(conn.username);
+    if (socialByKey.get(key) !== conn) return;
+    endCall(conn);
+    socialByKey.delete(key);
+    socialTask(conn, () => pushSocialToFriendsOf(conn.username));
+  }
+
+  function endCall(conn) {
+    const partnerKey = conn.callWith;
+    conn.callWith = "";
+    if (!partnerKey) return;
+    const partner = socialByKey.get(partnerKey);
+    if (partner && partner.callWith === coopUserKey(conn.username)) {
+      partner.callWith = "";
+      send(partner.ws, { t: "voice", from: conn.username, kind: "end" });
+    }
+  }
+
+  function handleVoice(conn, msg) {
+    const kind = String(msg.kind || "");
+    const toKey = coopUserKey(msg.to);
+    if (!VOICE_KINDS.has(kind) || !conn.friendKeys || !conn.friendKeys.has(toKey)) return;
+    const target = socialByKey.get(toKey);
+    const myKey = coopUserKey(conn.username);
+    if (!target) {
+      if (kind === "request") send(conn.ws, { t: "voice", from: msg.to, kind: "offline" });
+      return;
+    }
+    if (kind === "request" && ((target.callWith && target.callWith !== myKey) || conn.callWith)) {
+      send(conn.ws, { t: "voice", from: target.username, kind: "busy" });
+      return;
+    }
+    if (kind === "accept") {
+      endCall(conn);
+      conn.callWith = toKey;
+      target.callWith = myKey;
+    } else if ((kind === "end" || kind === "decline" || kind === "cancel") && conn.callWith === toKey) {
+      conn.callWith = "";
+      target.callWith = "";
+    } else if ((kind === "offer" || kind === "answer" || kind === "ice") && conn.callWith !== toKey) {
+      return;
+    }
+    send(target.ws, { t: "voice", from: conn.username, kind, data: msg.data });
+    if (kind === "accept" || kind === "end" || kind === "decline") {
+      socialTask(conn, async () => {
+        await pushSocialToFriendsOf(conn.username);
+        await pushSocialToFriendsOf(target.username);
+      });
+    }
+  }
+
+  function handleChat(conn, msg) {
+    const text = String(msg.text || "").replace(/\s+/g, " ").trim().slice(0, CHAT_MAX_LENGTH);
+    const toKey = coopUserKey(msg.to);
+    if (!text || !conn.friendKeys || !conn.friendKeys.has(toKey)) return;
+    const now = Date.now();
+    if (now - (conn.lastChatAt || 0) < CHAT_MIN_GAP_MS) return;
+    conn.lastChatAt = now;
+    socialTask(conn, async () => {
+      const friend = await coopStore.find(toKey);
+      if (!friend) return;
+      const entry = { from: conn.username, text, at: now };
+      await coopStore.addChat(chatPairKey(conn.username, friend.username), entry.from, entry.text, entry.at);
+      send(conn.ws, { t: "chat", with: friend.username, msg: entry });
+      const target = socialByKey.get(toKey);
+      if (target) send(target.ws, { t: "chat", with: conn.username, msg: entry });
+    });
+  }
+
+  function handleChatHistory(conn, msg) {
+    const withKey = coopUserKey(msg.with);
+    if (!conn.friendKeys || !conn.friendKeys.has(withKey)) return;
+    socialTask(conn, async () => {
+      const friend = await coopStore.find(withKey);
+      if (!friend) return;
+      const messages = await coopStore.listChat(chatPairKey(conn.username, friend.username), CHAT_HISTORY);
+      send(conn.ws, { t: "chatHistory", with: friend.username, messages });
+    });
+  }
+
+  function handleSocialMessage(conn, msg) {
+    if (msg.t === "voice") handleVoice(conn, msg);
+    else if (msg.t === "chat") handleChat(conn, msg);
+    else if (msg.t === "chatHistory") handleChatHistory(conn, msg);
+    else if (msg.t === "socialState") socialTask(conn, () => pushSocial(coopUserKey(conn.username)));
+  }
+
   function joinQueue(conn, mode, map) {
     leaveQueue(conn);
     const key = queueKey(mode, map);
@@ -2381,6 +2521,22 @@ function createMatchServer({ wss, verifyAccount, awardStars, coopStore }) {
         return;
       }
       if (!msg || typeof msg !== "object") return;
+      if (msg.t === "social-hello") {
+        if (conn.username) return;
+        Promise.resolve(verifyAccount(String(msg.username || ""), String(msg.password || "")))
+          .then((account) => {
+            if (!account || ws.readyState !== 1) return;
+            conn.username = account.username;
+            conn.social = true;
+            registerSocial(conn);
+          })
+          .catch(() => {});
+        return;
+      }
+      if (conn.social) {
+        handleSocialMessage(conn, msg);
+        return;
+      }
       if (msg.t === "playBots") {
         if (!conn.username) {
           send(ws, { t: "error", text: "Still signing in. Wait a moment, then tap Play Bots again." });
@@ -2461,6 +2617,10 @@ function createMatchServer({ wss, verifyAccount, awardStars, coopStore }) {
       }
     });
     ws.on("close", () => {
+      if (conn.social) {
+        unregisterSocial(conn);
+        return;
+      }
       leaveQueue(conn);
       if (conn.username) {
         const key = coopUserKey(conn.username);

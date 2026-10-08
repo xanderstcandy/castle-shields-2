@@ -1,6 +1,7 @@
 node_modules/
 tmp-*.png
 accounts.json
+chats.json
 .neon
 .env.local
 .cursor/hooks/push-to-render.log

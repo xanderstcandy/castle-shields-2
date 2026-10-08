@@ -88,7 +88,8 @@ const state = {
   coopNotice: "",
   coopDraft: "",
   coopParty: null,
-  coopBattleInvites: []
+  coopBattleInvites: [],
+  chatWith: ""
 };
 
 const REWARDS_WHEEL_SEGMENTS = [
@@ -1770,7 +1771,7 @@ let coopSocket = null;
 let coopReady = false;
 
 function isCoopScreen() {
-  return state.screen === "coop" || state.screen === "coop-friend" || state.screen === "coop-friends" || state.screen === "coop-play";
+  return state.screen === "coop" || state.screen === "coop-friend" || state.screen === "coop-friends" || state.screen === "coop-play" || state.screen === "coop-chat";
 }
 
 function closeCoopSocket() {
@@ -1902,6 +1903,445 @@ function acceptCoopFriend(from) {
     return;
   }
   coopSocket.send(JSON.stringify({ t: "friendAccept", from }));
+}
+
+const VOICE_ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }];
+const VOICE_RING_MS = 30000;
+const SOCIAL_NOTICE_MS = 4500;
+
+const social = {
+  socket: null,
+  retryTimer: null,
+  retryAttempt: 0,
+  friends: [],
+  unread: {},
+  chats: {},
+  notice: "",
+  noticeTimer: null,
+  call: null
+};
+
+const socialBar = document.createElement("div");
+socialBar.className = "social-bar";
+socialBar.setAttribute("aria-label", "Friends");
+document.body.appendChild(socialBar);
+
+const voiceAudio = document.createElement("audio");
+voiceAudio.autoplay = true;
+document.body.appendChild(voiceAudio);
+
+function socialKey(name) {
+  return String(name || "").trim().toLowerCase();
+}
+
+function ensureSocialSocket() {
+  if (!state.username || !state.password) return;
+  if (social.socket && (social.socket.readyState === WebSocket.OPEN || social.socket.readyState === WebSocket.CONNECTING)) return;
+  clearTimeout(social.retryTimer);
+  const socket = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
+  social.socket = socket;
+  socket.onopen = () => {
+    social.retryAttempt = 0;
+    socket.send(JSON.stringify({ t: "social-hello", username: state.username, password: state.password }));
+  };
+  socket.onmessage = (event) => {
+    let msg;
+    try {
+      msg = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    handleSocialMessage(msg);
+  };
+  socket.onclose = () => {
+    if (social.socket !== socket) return;
+    social.socket = null;
+    if (social.call) endVoice("Voice chat disconnected.");
+    if (!state.username) return;
+    const delay = Math.min(15000, 1000 + social.retryAttempt * 2000);
+    social.retryAttempt += 1;
+    social.retryTimer = setTimeout(ensureSocialSocket, delay);
+  };
+}
+
+function closeSocialSocket() {
+  clearTimeout(social.retryTimer);
+  if (social.call) endVoice("");
+  const socket = social.socket;
+  social.socket = null;
+  if (socket) {
+    socket.onclose = null;
+    socket.close();
+  }
+  social.friends = [];
+  social.unread = {};
+  social.chats = {};
+  social.notice = "";
+  renderSocialBar();
+}
+
+function sendSocial(payload) {
+  if (!social.socket || social.socket.readyState !== WebSocket.OPEN) {
+    ensureSocialSocket();
+    return false;
+  }
+  social.socket.send(JSON.stringify(payload));
+  return true;
+}
+
+function showSocialNotice(text) {
+  social.notice = text;
+  clearTimeout(social.noticeTimer);
+  if (text) {
+    social.noticeTimer = setTimeout(() => {
+      social.notice = "";
+      renderSocialBar();
+    }, SOCIAL_NOTICE_MS);
+  }
+  renderSocialBar();
+}
+
+function handleSocialMessage(msg) {
+  if (msg.t === "social") {
+    social.friends = Array.isArray(msg.friends) ? msg.friends : [];
+    renderSocialBar();
+    if (state.screen === "coop-chat") updateChatHeader();
+    return;
+  }
+  if (msg.t === "social-notice") {
+    showSocialNotice(String(msg.text || ""));
+    return;
+  }
+  if (msg.t === "chat") {
+    const key = socialKey(msg.with);
+    const list = social.chats[key] || (social.chats[key] = []);
+    list.push(msg.msg);
+    const viewing = state.screen === "coop-chat" && socialKey(state.chatWith) === key;
+    if (viewing) {
+      updateChatLog();
+    } else if (socialKey(msg.msg.from) !== socialKey(state.username)) {
+      social.unread[key] = (social.unread[key] || 0) + 1;
+      showSocialNotice(`New message from ${msg.msg.from}`);
+    }
+    return;
+  }
+  if (msg.t === "chatHistory") {
+    social.chats[socialKey(msg.with)] = Array.isArray(msg.messages) ? msg.messages : [];
+    if (state.screen === "coop-chat" && socialKey(state.chatWith) === socialKey(msg.with)) updateChatLog();
+    return;
+  }
+  if (msg.t === "voice") handleVoiceSignal(msg);
+}
+
+function friendOnline(name) {
+  return social.friends.some((friend) => socialKey(friend.name) === socialKey(name) && friend.online);
+}
+
+async function getVoiceMic() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error("no-mic");
+  return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false });
+}
+
+async function requestVoice(name) {
+  if (social.call) {
+    showSocialNotice(socialKey(social.call.with) === socialKey(name) ? `Already in voice with ${name}.` : "Hang up your current voice chat first.");
+    return;
+  }
+  if (!friendOnline(name)) {
+    showSocialNotice(`${name} is offline.`);
+    return;
+  }
+  social.call = { with: name, status: "calling", pc: null, stream: null, muted: false, pendingIce: [], ringTimer: null };
+  renderSocialBar();
+  const call = social.call;
+  try {
+    call.stream = await getVoiceMic();
+  } catch {
+    if (social.call === call) endVoice("Allow microphone access to voice chat.");
+    return;
+  }
+  if (social.call !== call) {
+    call.stream.getTracks().forEach((track) => track.stop());
+    return;
+  }
+  if (!sendSocial({ t: "voice", to: name, kind: "request" })) {
+    endVoice("Not connected yet. Try again in a moment.");
+    return;
+  }
+  call.ringTimer = setTimeout(() => {
+    if (social.call === call && call.status === "calling") {
+      sendSocial({ t: "voice", to: name, kind: "cancel" });
+      endVoice(`${name} didn't answer.`);
+    }
+  }, VOICE_RING_MS);
+}
+
+async function acceptVoice() {
+  const call = social.call;
+  if (!call || call.status !== "ringing") return;
+  call.status = "connecting";
+  renderSocialBar();
+  try {
+    call.stream = await getVoiceMic();
+  } catch {
+    sendSocial({ t: "voice", to: call.with, kind: "decline" });
+    if (social.call === call) endVoice("Allow microphone access to voice chat.");
+    return;
+  }
+  if (social.call !== call) {
+    call.stream.getTracks().forEach((track) => track.stop());
+    return;
+  }
+  sendSocial({ t: "voice", to: call.with, kind: "accept" });
+}
+
+function declineVoice() {
+  const call = social.call;
+  if (!call) return;
+  sendSocial({ t: "voice", to: call.with, kind: call.status === "ringing" ? "decline" : call.status === "calling" ? "cancel" : "end" });
+  endVoice("");
+}
+
+function toggleVoiceMute() {
+  const call = social.call;
+  if (!call || !call.stream) return;
+  call.muted = !call.muted;
+  call.stream.getAudioTracks().forEach((track) => { track.enabled = !call.muted; });
+  renderSocialBar();
+}
+
+function endVoice(notice) {
+  const call = social.call;
+  social.call = null;
+  if (call) {
+    clearTimeout(call.ringTimer);
+    if (call.pc) call.pc.close();
+    if (call.stream) call.stream.getTracks().forEach((track) => track.stop());
+  }
+  voiceAudio.srcObject = null;
+  if (notice) showSocialNotice(notice);
+  else renderSocialBar();
+}
+
+function createVoicePeer(call) {
+  const pc = new RTCPeerConnection({ iceServers: VOICE_ICE_SERVERS });
+  call.pc = pc;
+  call.stream.getTracks().forEach((track) => pc.addTrack(track, call.stream));
+  pc.onicecandidate = (event) => {
+    if (event.candidate) sendSocial({ t: "voice", to: call.with, kind: "ice", data: event.candidate.toJSON() });
+  };
+  pc.ontrack = (event) => {
+    voiceAudio.srcObject = event.streams[0];
+    voiceAudio.play().catch(() => {});
+  };
+  pc.onconnectionstatechange = () => {
+    if (social.call !== call) return;
+    if (pc.connectionState === "connected") {
+      call.status = "live";
+      renderSocialBar();
+    } else if (pc.connectionState === "failed") {
+      sendSocial({ t: "voice", to: call.with, kind: "end" });
+      endVoice("Voice couldn't connect on this network.");
+    }
+  };
+  return pc;
+}
+
+async function flushVoiceIce(call) {
+  const pending = call.pendingIce;
+  call.pendingIce = [];
+  for (const candidate of pending) await call.pc.addIceCandidate(candidate).catch(() => {});
+}
+
+async function handleVoiceSignal(msg) {
+  const from = String(msg.from || "");
+  const call = social.call;
+  const fromCurrent = call && socialKey(call.with) === socialKey(from);
+  if (msg.kind === "request") {
+    if (call) {
+      sendSocial({ t: "voice", to: from, kind: "decline" });
+      return;
+    }
+    social.call = { with: from, status: "ringing", pc: null, stream: null, muted: false, pendingIce: [], ringTimer: null };
+    social.call.ringTimer = setTimeout(() => {
+      if (social.call && social.call.status === "ringing" && socialKey(social.call.with) === socialKey(from)) {
+        sendSocial({ t: "voice", to: from, kind: "decline" });
+        endVoice(`Missed voice chat from ${from}.`);
+      }
+    }, VOICE_RING_MS);
+    renderSocialBar();
+    return;
+  }
+  if (!fromCurrent) return;
+  try {
+    if (msg.kind === "accept" && call.status === "calling") {
+      clearTimeout(call.ringTimer);
+      call.status = "connecting";
+      renderSocialBar();
+      const pc = createVoicePeer(call);
+      await pc.setLocalDescription(await pc.createOffer());
+      sendSocial({ t: "voice", to: from, kind: "offer", data: pc.localDescription.toJSON() });
+    } else if (msg.kind === "offer" && call.status === "connecting" && call.stream) {
+      clearTimeout(call.ringTimer);
+      const pc = createVoicePeer(call);
+      await pc.setRemoteDescription(msg.data);
+      await pc.setLocalDescription(await pc.createAnswer());
+      sendSocial({ t: "voice", to: from, kind: "answer", data: pc.localDescription.toJSON() });
+      await flushVoiceIce(call);
+    } else if (msg.kind === "answer" && call.pc) {
+      await call.pc.setRemoteDescription(msg.data);
+      await flushVoiceIce(call);
+    } else if (msg.kind === "ice" && msg.data) {
+      if (call.pc && call.pc.remoteDescription) await call.pc.addIceCandidate(msg.data).catch(() => {});
+      else call.pendingIce.push(msg.data);
+    } else if (msg.kind === "decline") {
+      endVoice(`${from} can't voice chat right now.`);
+    } else if (msg.kind === "cancel") {
+      endVoice(`${from} stopped calling.`);
+    } else if (msg.kind === "busy") {
+      endVoice(`${from} is already in a voice chat.`);
+    } else if (msg.kind === "offline") {
+      endVoice(`${from} is offline.`);
+    } else if (msg.kind === "end") {
+      endVoice(`${from} left voice chat.`);
+    }
+  } catch {
+    sendSocial({ t: "voice", to: from, kind: "end" });
+    endVoice("Voice chat failed to connect.");
+  }
+}
+
+function socialCallHtml() {
+  const call = social.call;
+  if (!call) return "";
+  const name = escapeHtml(call.with);
+  if (call.status === "ringing") {
+    return `
+      <div class="social-call social-call--ringing" role="alertdialog" aria-label="Voice chat request">
+        <span class="social-call-text">🎙 <strong>${name}</strong> wants to voice chat</span>
+        <button type="button" class="social-call-btn social-call-btn--go" data-social="accept">Accept</button>
+        <button type="button" class="social-call-btn social-call-btn--stop" data-social="decline">Decline</button>
+      </div>`;
+  }
+  if (call.status === "calling") {
+    return `
+      <div class="social-call" role="status">
+        <span class="social-call-text">🎙 Calling <strong>${name}</strong>…</span>
+        <button type="button" class="social-call-btn social-call-btn--stop" data-social="decline">Cancel</button>
+      </div>`;
+  }
+  return `
+    <div class="social-call social-call--live" role="status">
+      <span class="social-call-text">${call.status === "live" ? "🔊 Voice with" : "🎙 Connecting to"} <strong>${name}</strong></span>
+      <button type="button" class="social-call-btn" data-social="mute" aria-pressed="${call.muted}">${call.muted ? "Unmute" : "Mute"}</button>
+      <button type="button" class="social-call-btn social-call-btn--stop" data-social="decline">Hang up</button>
+    </div>`;
+}
+
+function renderSocialBar() {
+  const signedIn = Boolean(state.username) && state.screen !== "sign-in" && state.screen !== "create-account";
+  socialBar.hidden = !signedIn;
+  if (!signedIn) {
+    socialBar.innerHTML = "";
+    return;
+  }
+  const chips = social.friends.length
+    ? social.friends.map((friend) => {
+        const unread = social.unread[socialKey(friend.name)] || 0;
+        const status = friend.inCall ? "in voice" : friend.online ? "online" : "offline";
+        return `
+          <button
+            type="button"
+            class="social-friend${friend.online ? " social-friend--online" : ""}"
+            data-social="call"
+            data-name="${escapeHtml(friend.name)}"
+            title="${friend.online ? `Request voice chat with ${escapeHtml(friend.name)}` : `${escapeHtml(friend.name)} is offline`}"
+            aria-label="${escapeHtml(friend.name)}, ${status}. Request voice chat"
+          >
+            <span class="social-friend-dot${friend.inCall ? " social-friend-dot--call" : ""}" aria-hidden="true"></span>
+            <span class="social-friend-name">${escapeHtml(friend.name)}</span>
+            ${unread ? `<span class="social-friend-unread" aria-label="${unread} unread">${unread}</span>` : ""}
+          </button>`;
+      }).join("")
+    : `<span class="social-empty">No friends yet · add them in Co-op</span>`;
+  socialBar.innerHTML = `
+    <div class="social-friends">${chips}</div>
+    ${socialCallHtml()}
+    ${social.notice ? `<p class="social-notice" role="status">${escapeHtml(social.notice)}</p>` : ""}
+  `;
+}
+
+socialBar.addEventListener("click", (event) => {
+  const target = event.target.closest("[data-social]");
+  if (!target) return;
+  event.stopPropagation();
+  const kind = target.dataset.social;
+  if (kind === "call") requestVoice(target.dataset.name);
+  else if (kind === "accept") acceptVoice();
+  else if (kind === "decline") declineVoice();
+  else if (kind === "mute") toggleVoiceMute();
+});
+
+function chatMessagesHtml() {
+  const list = social.chats[socialKey(state.chatWith)];
+  if (!list) return `<li class="chat-empty">Loading messages…</li>`;
+  if (!list.length) return `<li class="chat-empty">No messages yet. Say hi to ${escapeHtml(state.chatWith)}!</li>`;
+  const me = socialKey(state.username);
+  return list.map((entry) => {
+    const mine = socialKey(entry.from) === me;
+    const time = new Date(entry.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return `
+      <li class="chat-msg${mine ? " chat-msg--mine" : ""}">
+        <span class="chat-msg-meta">${mine ? "You" : escapeHtml(entry.from)} · ${time}</span>
+        <span class="chat-msg-text">${escapeHtml(entry.text)}</span>
+      </li>`;
+  }).join("");
+}
+
+function updateChatLog() {
+  const log = app.querySelector("[data-chat-log]");
+  if (!log) return;
+  log.innerHTML = chatMessagesHtml();
+  log.scrollTop = log.scrollHeight;
+}
+
+function chatStatusText() {
+  const friend = social.friends.find((entry) => socialKey(entry.name) === socialKey(state.chatWith));
+  if (!friend) return "Offline";
+  return friend.inCall ? "In voice chat" : friend.online ? "Online" : "Offline · they'll see it later";
+}
+
+function updateChatHeader() {
+  const status = app.querySelector("[data-chat-status]");
+  if (status) status.textContent = chatStatusText();
+}
+
+function openChat(name) {
+  state.chatWith = name;
+  state.screen = "coop-chat";
+  social.unread[socialKey(name)] = 0;
+  render();
+  if (!sendSocial({ t: "chatHistory", with: name })) {
+    const retry = setInterval(() => {
+      if (state.screen !== "coop-chat" || socialKey(state.chatWith) !== socialKey(name)) {
+        clearInterval(retry);
+        return;
+      }
+      if (sendSocial({ t: "chatHistory", with: name })) clearInterval(retry);
+    }, 700);
+  }
+}
+
+function submitChat(form) {
+  const input = form.querySelector("input[name='text']");
+  const text = String(input.value || "").trim();
+  if (!text) return;
+  if (!sendSocial({ t: "chat", to: state.chatWith, text })) {
+    showSocialNotice("Connecting to chat… try again in a moment.");
+    return;
+  }
+  input.value = "";
+  input.focus();
 }
 
 function formatQueueWait(ms) {
@@ -2442,25 +2882,62 @@ function renderCoopPlay() {
 function renderCoopFriends() {
   ensureCoopSocket();
   const squad = state.coopFriends.length
-    ? state.coopFriends.map((friend) => `
-      <li class="coop-squad-member${friend.online ? "" : " coop-squad-member--offline"}">
-        <span class="coop-squad-badge" aria-hidden="true">${modeIcons.coop}</span>
-        <span class="coop-squad-name">${escapeHtml(friend.name)}</span>
-        <span class="coop-squad-status">${friend.online ? "Online" : "Offline"}</span>
-      </li>
-    `).join("")
+    ? state.coopFriends.map((friend) => {
+        const unread = social.unread[socialKey(friend.name)] || 0;
+        const online = friend.online || friendOnline(friend.name);
+        return `
+      <li>
+        <button
+          type="button"
+          class="coop-squad-member coop-squad-member--chat${online ? "" : " coop-squad-member--offline"}"
+          data-action="open-chat"
+          data-name="${escapeHtml(friend.name)}"
+          aria-label="Chat with ${escapeHtml(friend.name)}"
+        >
+          <span class="coop-squad-badge" aria-hidden="true">${modeIcons.coop}</span>
+          <span class="coop-squad-name">${escapeHtml(friend.name)}</span>
+          ${unread ? `<span class="social-friend-unread">${unread}</span>` : ""}
+          <span class="coop-squad-status">${online ? "Online" : "Offline"} · Chat ›</span>
+        </button>
+      </li>`;
+      }).join("")
     : `<li class="coop-squad-empty">No squad yet. Tap <strong>Friend</strong> to invite someone who accepts your request.</li>`;
   renderScene(renderCard(`
     <header class="drop-head hub-head">
       <p class="drop-kicker">Co-op · <span>Squad</span></p>
       <h1 class="drop-title drop-title-compact">Your Friends</h1>
-      <p class="drop-tagline">Accepted buddies show up here and will join you when Play is ready.</p>
+      <p class="drop-tagline">Tap a friend to send them messages.</p>
     </header>
     ${coopNoticeHtml()}
     <ul class="coop-squad-list" aria-label="Co-op squad">${squad}</ul>
     <button class="drop-button ghost hub-sign-out" type="button" data-action="coop-back">Back to Co-op</button>
     ${liveBar()}
   `));
+}
+
+function renderCoopChat() {
+  ensureCoopSocket();
+  const name = escapeHtml(state.chatWith);
+  const previousInput = app.querySelector(".chat-input");
+  const draft = previousInput && previousInput.dataset.with === state.chatWith ? previousInput.value : "";
+  renderScene(renderCard(`
+    <header class="drop-head hub-head chat-head">
+      <p class="drop-kicker">Friends · <span>Chat</span></p>
+      <h1 class="drop-title drop-title-compact">${name}</h1>
+      <p class="drop-tagline chat-status" data-chat-status>${escapeHtml(chatStatusText())}</p>
+      <button type="button" class="social-call-btn social-call-btn--go chat-voice-btn" data-action="chat-voice" data-name="${name}">🎙 Voice chat</button>
+    </header>
+    <ul class="chat-log" data-chat-log aria-label="Messages with ${name}" aria-live="polite">${chatMessagesHtml()}</ul>
+    <form class="chat-form" data-form="chat" autocomplete="off">
+      <input class="chat-input" name="text" type="text" maxlength="300" placeholder="Message ${name}…" aria-label="Message ${name}" data-with="${name}" value="${escapeHtml(draft)}">
+      <button class="drop-button chat-send" type="submit">Send</button>
+    </form>
+    <button class="drop-button ghost hub-sign-out" type="button" data-action="coop-next">Back to Friends</button>
+  `, "chat-card"));
+  const log = app.querySelector("[data-chat-log]");
+  if (log) log.scrollTop = log.scrollHeight;
+  const input = app.querySelector(".chat-input");
+  if (input) input.focus();
 }
 
 function renderBattleMenu() {
@@ -3708,6 +4185,8 @@ function render() {
     renderCoopFriends();
   } else if (state.screen === "coop-play") {
     renderCoopPlay();
+  } else if (state.screen === "coop-chat") {
+    renderCoopChat();
   } else if (state.screen === "queue") {
     renderQueue();
   } else if (state.screen === "match") {
@@ -3731,6 +4210,8 @@ function render() {
   }
 
   state.shake = 0;
+  if (state.username && state.password) ensureSocialSocket();
+  renderSocialBar();
 
   const firstInput = app.querySelector("input[name='username']");
   if (firstInput && !state.busy && (state.screen === "sign-in" || state.screen === "create-account")) {
@@ -4065,6 +4546,16 @@ app.addEventListener("click", (event) => {
     return;
   }
 
+  if (action === "open-chat") {
+    openChat(actionTarget.dataset.name);
+    return;
+  }
+
+  if (action === "chat-voice") {
+    requestVoice(actionTarget.dataset.name);
+    return;
+  }
+
   if (action === "coop-play") {
     state.coopNotice = "";
     state.screen = "coop-play";
@@ -4171,6 +4662,7 @@ app.addEventListener("click", (event) => {
 
   if (action === "sign-out") {
     closeCoopSocket();
+    closeSocialSocket();
     state.screen = "sign-in";
     state.username = "";
     state.password = "";
@@ -4193,11 +4685,21 @@ function submitCoopFriend(form) {
   sendCoopFriendRequest(String(data.get("username") || "").trim());
 }
 
+app.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" || event.shiftKey || !event.target.matches(".chat-input")) return;
+  event.preventDefault();
+  submitChat(event.target.form);
+});
+
 app.addEventListener("submit", (event) => {
   const form = event.target.closest("form[data-form]");
   if (!form) return;
 
   event.preventDefault();
+  if (form.dataset.form === "chat") {
+    submitChat(form);
+    return;
+  }
   if (form.dataset.form === "coop-friend") {
     submitCoopFriend(form);
     return;

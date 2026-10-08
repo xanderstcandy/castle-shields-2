@@ -355,7 +355,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if (resolvedPath === path.resolve(accountsFile) || resolvedPath === path.resolve(walletGrantsFile)) {
+  if (resolvedPath === path.resolve(accountsFile) || resolvedPath === path.resolve(walletGrantsFile) || resolvedPath === path.resolve(dataDir, "chats.json")) {
     res.writeHead(403);
     res.end("Forbidden");
     return;
@@ -393,6 +393,14 @@ const coopStore = {
   async saveCoop(usernameKey, friends, incoming) {
     await ensureStoreReady();
     return store.saveCoop(usernameKey, friends, incoming);
+  },
+  async addChat(pairKey, from, text, at) {
+    await ensureStoreReady();
+    return store.addChat(pairKey, from, text, at);
+  },
+  async listChat(pairKey, limit) {
+    await ensureStoreReady();
+    return store.listChat(pairKey, limit);
   }
 };
 

@@ -55,8 +55,32 @@ function writeJsonAccounts(accountsFile, dataDir, accounts) {
   fs.writeFileSync(accountsFile, JSON.stringify(accounts));
 }
 
+const CHAT_KEEP = 200;
+
+function readJsonChats(chatsFile) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(chatsFile, "utf8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 function fileStore(accountsFile, dataDir) {
+  const chatsFile = path.join(dataDir, "chats.json");
   return {
+    async addChat(pairKey, from, text, at) {
+      const chats = readJsonChats(chatsFile);
+      const list = Array.isArray(chats[pairKey]) ? chats[pairKey] : [];
+      list.push({ from, text, at });
+      chats[pairKey] = list.slice(-CHAT_KEEP);
+      fs.mkdirSync(dataDir, { recursive: true });
+      fs.writeFileSync(chatsFile, JSON.stringify(chats));
+    },
+    async listChat(pairKey, limit) {
+      const list = readJsonChats(chatsFile)[pairKey];
+      return Array.isArray(list) ? list.slice(-limit) : [];
+    },
     label: "accounts.json",
     async ready() {},
     async list() {
@@ -143,7 +167,27 @@ function postgresStore(pool, accountsFile) {
           ADD COLUMN IF NOT EXISTS coop_friends jsonb NOT NULL DEFAULT '[]'::jsonb,
           ADD COLUMN IF NOT EXISTS coop_incoming jsonb NOT NULL DEFAULT '[]'::jsonb
       `);
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS bb_chat (
+          id bigserial PRIMARY KEY,
+          pair_key text NOT NULL,
+          sender text NOT NULL,
+          body text NOT NULL,
+          sent_at bigint NOT NULL
+        )
+      `);
+      await pool.query("CREATE INDEX IF NOT EXISTS bb_chat_pair_idx ON bb_chat (pair_key, id)");
       await migrateFromFileIfEmpty();
+    },
+    async addChat(pairKey, from, text, at) {
+      await pool.query("INSERT INTO bb_chat (pair_key, sender, body, sent_at) VALUES ($1, $2, $3, $4)", [pairKey, from, text, at]);
+    },
+    async listChat(pairKey, limit) {
+      const result = await pool.query(
+        "SELECT sender, body, sent_at FROM bb_chat WHERE pair_key = $1 ORDER BY id DESC LIMIT $2",
+        [pairKey, limit]
+      );
+      return result.rows.reverse().map((row) => ({ from: row.sender, text: row.body, at: Number(row.sent_at) }));
     },
     async list() {
       const result = await pool.query(`SELECT ${ACCOUNT_COLUMNS} FROM bb_accounts ORDER BY username`);
