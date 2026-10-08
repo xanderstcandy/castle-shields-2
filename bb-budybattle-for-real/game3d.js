@@ -2505,11 +2505,11 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     });
 
     const liveProj = new Set();
-    latest.proj.forEach(([id, x, y, z]) => {
+    latest.proj.forEach(([id, x, y, z, big]) => {
       liveProj.add(id);
       let mesh = g.projectiles.get(id);
       if (!mesh) {
-        mesh = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 6), new THREE.MeshBasicMaterial({ color: 0xfff1a8 }));
+        mesh = new THREE.Mesh(new THREE.SphereGeometry(big ? 0.3 : 0.12, 8, 6), new THREE.MeshBasicMaterial({ color: big ? 0xf97316 : 0xfff1a8 }));
         mesh.position.set(x, y, z);
         scene.add(mesh);
         g.projectiles.set(id, mesh);
@@ -2736,7 +2736,8 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     if (turnAmount > 0 && !g.shopOpen && !g.rightDrag) {
       g.camYaw -= Math.sign(g.mouse.x) * (turnAmount / (1 - MOUSE_TURN_DEADZONE)) * MOUSE_TURN_SPEED * dt;
     }
-    const scoped = g.scope && g.me && g.me.inv[g.me.held] === "Sniper Rifle";
+    const scopeFov = g.scope && g.me ? WEAPON_SCOPE_FOV[g.me.inv[g.me.held]] : undefined;
+    const scoped = Boolean(scopeFov);
     const panGoal = scoped ? new THREE.Vector2(0, 0) : g.mouse;
     g.camPan.lerp(panGoal, Math.min(1, dt * 3));
     const sideX = -Math.cos(g.camYaw);
@@ -2766,7 +2767,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       g.shake = Math.max(0, g.shake - dt * 1.5);
     }
     camera.lookAt(target);
-    const fov = scoped ? 22 : 60;
+    const fov = scoped ? scopeFov : 60;
     if (camera.fov !== fov) {
       camera.fov = fov;
       camera.updateProjectionMatrix();

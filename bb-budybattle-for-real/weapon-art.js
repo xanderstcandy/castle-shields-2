@@ -485,6 +485,30 @@ const WEAPON_ART = {
     + `<rect x="90" y="2.5" width="8" height="10" rx="2" fill="${wf("black")}" ${WPN_O}/>`
     + `<ellipse cx="97.5" cy="7.5" rx="1.2" ry="4" fill="#38bdf8"/>`
     + `<line x1="52" y1="5.6" x2="88" y2="5.6" ${WPN_SHINE}/>`,
+  "Sniper": () => `<path d="M124 23 L114 40 M126 23 L136 40" stroke="#0b1220" stroke-width="2.4" stroke-linecap="round"/>`
+    + `<path d="M124 23 L114 40 M126 23 L136 40" stroke="#a8a29e" stroke-width="1.2" stroke-linecap="round"/>`
+    + `<rect x="86" y="18" width="70" height="3.6" rx="1" fill="${wf("black")}" ${WPN_O}/>`
+    + `<rect x="152" y="16" width="7" height="7.5" rx="1.5" fill="${wf("black")}" ${WPN_O}/>`
+    + `<path d="M44 15 L90 15 L90 26 L62 26 L58 29 L44 29 Z" fill="${wf("woodlight")}" ${WPN_O}/>`
+    + `<path d="M46 15 L6 18 L6 35 L17 35 L30 28 L46 28 Z" fill="${wf("woodlight")}" ${WPN_O}/>`
+    + `<rect x="6" y="18" width="3" height="17" fill="${wf("black")}"/>`
+    + `<path d="M62 29 Q62 37 72 36 L74 28" fill="none" stroke="#0b1220" stroke-width="2"/>`
+    + `<rect x="52" y="10" width="4" height="5" fill="${wf("black")}"/><rect x="84" y="10" width="4" height="5" fill="${wf("black")}"/>`
+    + `<rect x="44" y="2" width="56" height="9" rx="4" fill="${wf("black")}" ${WPN_O}/>`
+    + `<rect x="38" y="1" width="9" height="11" rx="2" fill="${wf("black")}" ${WPN_O}/>`
+    + `<rect x="97" y="0.5" width="10" height="12" rx="2" fill="${wf("black")}" ${WPN_O}/>`
+    + `<ellipse cx="106" cy="6.5" rx="1.4" ry="5" fill="#a855f7"/>`
+    + `<line x1="50" y1="4.4" x2="94" y2="4.4" ${WPN_SHINE}/>`,
+  "Bazooka": () => `<rect x="10" y="12" width="132" height="16" rx="7" fill="${wf("green")}" ${WPN_O}/>`
+    + `<path d="M4 9 L14 12 L14 28 L4 31 Z" fill="${wf("black")}" ${WPN_O}/>`
+    + `<path d="M140 10 L156 8 L156 32 L140 30 Z" fill="${wf("black")}" ${WPN_O}/>`
+    + `<rect x="40" y="10.5" width="6" height="19" rx="1" fill="${wf("black")}"/><rect x="104" y="10.5" width="6" height="19" rx="1" fill="${wf("black")}"/>`
+    + `<rect x="60" y="4" width="18" height="7" rx="2" fill="${wf("dark")}" ${WPN_O}/>`
+    + `<path d="M58 28 L68 28 L65 42 L55 42 Z" fill="${wf("black")}" ${WPN_O}/>`
+    + `<path d="M86 28 L96 28 L93 42 L83 42 Z" fill="${wf("black")}" ${WPN_O}/>`
+    + `<path d="M68 29 Q68 35 75 34" fill="none" stroke="#0b1220" stroke-width="2"/>`
+    + `<circle cx="150" cy="20" r="5" fill="#f97316"/>`
+    + `<line x1="16" y1="15.5" x2="136" y2="15.5" ${WPN_SHINE}/>`,
   "Automatic Rifle": () => `<rect x="118" y="15" width="34" height="5" rx="1" fill="${wf("dark")}" ${WPN_O}/>`
     + `<path d="M122 15 L122 20 M126 15 L126 20 M130 15 L130 20 M134 15 L134 20 M138 15 L138 20" stroke="#1e293b" stroke-width="1.4"/>`
     + `<rect x="150" y="14" width="6" height="7" rx="1" fill="${wf("black")}" ${WPN_O}/>`

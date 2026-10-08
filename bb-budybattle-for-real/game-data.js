@@ -81,6 +81,8 @@ const WEAPON_SHOP_ITEMS = [
   "Shotgun",
   "Assault Rifle",
   "Sniper Rifle",
+  "Sniper",
+  "Bazooka",
   "Automatic Rifle",
   "Energy Pistol",
   "BB Gun",
@@ -144,7 +146,7 @@ const WEAPON_DAMAGE = {
   "Baseball Bat": 14, "Nail Bat": 18, "Bo Staff": 9, "Nunchaku": 10, "Sai": 12,
   "Shuriken": 6, "Throwing Knife": 10, "Crossbow": 35, "Longbow": 30, "Slingshot": 4,
   "Blowdart": 4, "Pistol": 20, "Revolver": 28, "SMG": 14, "Shotgun": 45,
-  "Assault Rifle": 25, "Sniper Rifle": 80, "Automatic Rifle": 22, "Energy Pistol": 40, "BB Gun": 15,
+  "Assault Rifle": 25, "Sniper Rifle": 80, "Sniper": 75, "Bazooka": 25, "Automatic Rifle": 22, "Energy Pistol": 40, "BB Gun": 15,
   "Jetpack": 0, "Body Armor": 0, "Combat Helmet": 0, "Riot Shield": 5, "Grappling Hook": 3,
   "Stun Baton": 6, "Chainsaw": 40, "Fire Axe": 24, "Pickaxe": 18, "Shovel": 12,
   "Garden Hoe": 10, "Rake": 7, "Broom": 4, "Umbrella": 5, "Walking Stick": 7,
@@ -166,12 +168,27 @@ const WEAPON_ABILITY = {
   "Stun Baton": "Stun for 2 seconds",
   "Blowdart": "Poison: 10 damage over 5 seconds",
   "Sniper Rifle": "Scope: zoom in far",
-  "BB Gun": "2× damage to B.B.s"
+  "Sniper": "Scope: zoom in extra far",
+  "BB Gun": "2× damage to B.B.s",
+  "Bazooka": "2× damage to cars"
 };
 
 const WEAPON_BB_DAMAGE_MULTIPLIER = {
   "BB Gun": 2
 };
+
+const WEAPON_VEHICLE_DAMAGE_MULTIPLIER = {
+  "Bazooka": 2
+};
+
+const WEAPON_SCOPE_FOV = {
+  "Sniper Rifle": 22,
+  "Sniper": 11
+};
+
+function getWeaponVehicleDamageMultiplier(name) {
+  return WEAPON_VEHICLE_DAMAGE_MULTIPLIER[name] ?? 1;
+}
 
 function getWeaponDamage(name) {
   return WEAPON_DAMAGE[name] ?? 0;
@@ -264,6 +281,8 @@ const WEAPON_UNIT_PRICE = {
   "Shotgun": 110,
   "Assault Rifle": 180,
   "Sniper Rifle": 240,
+  "Sniper": 280,
+  "Bazooka": 220,
   "Automatic Rifle": 200,
   "Jetpack": 300,
   "Body Armor": 150,
@@ -386,7 +405,9 @@ const WEAPON_RANGED = {
   "Shotgun": { range: 22, cooldownMs: 950, speed: 100 },
   "Assault Rifle": { range: 75, cooldownMs: 180, speed: 140 },
   "Automatic Rifle": { range: 75, cooldownMs: 150, speed: 140 },
-  "Sniper Rifle": { range: 220, cooldownMs: 1600, speed: 260 }
+  "Sniper Rifle": { range: 220, cooldownMs: 1600, speed: 260 },
+  "Sniper": { range: 320, cooldownMs: 1800, speed: 300 },
+  "Bazooka": { range: 80, cooldownMs: 1500, speed: 55 }
 };
 
 const WEAPON_PASSIVE = ["Body Armor", "Combat Helmet", "Riot Shield", "Jetpack", "Grappling Hook"];
@@ -548,6 +569,8 @@ if (typeof module !== "undefined") {
     getWeaponDamage,
     getWeaponDefense,
     getWeaponBbDamageMultiplier,
+    getWeaponVehicleDamageMultiplier,
+    WEAPON_SCOPE_FOV,
     getWeaponShopPrice,
     getWeaponInGameShopPrice,
     getBbInGamePrice,

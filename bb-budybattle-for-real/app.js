@@ -390,7 +390,7 @@ function buddyFaceFeatures(look, side) {
 }
 
 const HELD_GUNS = new Set([
-  "Pistol", "Revolver", "SMG", "Shotgun", "Assault Rifle", "Sniper Rifle",
+  "Pistol", "Revolver", "SMG", "Shotgun", "Assault Rifle", "Sniper Rifle", "Sniper", "Bazooka",
   "Automatic Rifle", "Energy Pistol", "BB Gun", "Crossbow", "Chainsaw"
 ]);
 const HELD_CENTERED = new Set([

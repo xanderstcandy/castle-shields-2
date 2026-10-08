@@ -620,6 +620,15 @@ class Match {
     });
   }
 
+  damageWorldCar(car, damage) {
+    car.hp -= damage;
+    if (car.hp > 0) return;
+    car.broken = true;
+    this.map.carBlocks.forEach((block) => { if (block.car === car.id) block.broken = true; });
+    this.events.push({ k: "break", kind: "car", id: car.id });
+    this.dropResources(car.x, car.z, car.y, WORLD_DROPS.car);
+  }
+
   dropResources(x, z, y, drops) {
     if (drops.wood) this.dropLoot(x, z, "Wood", y, drops.wood);
     if (drops.metal) this.dropLoot(x, z, "Metal", y, drops.metal);
@@ -1439,11 +1448,21 @@ class Match {
         const t = stepLenSq > 0 ? Math.max(0, Math.min(1, ((px - proj.x) * stepX + (pz - proj.z) * stepZ) / stepLenSq)) : 1;
         return { d: Math.hypot(px - (proj.x + stepX * t), pz - (proj.z + stepZ * t)), y: proj.y + stepY * t };
       };
+      const carDamage = proj.damage * data.getWeaponVehicleDamageMultiplier(proj.item);
       for (const v of this.vehicles) {
         if (v.id === proj.vehicle) continue;
         const hit = closest(v.x, v.z);
         if (hit.d < data.VEHICLES[v.kind].radius + 0.3 && hit.y > v.y - 0.2 && hit.y < v.y + 2.2) {
-          this.damageVehicle(v, proj.damage, owner);
+          this.damageVehicle(v, carDamage, owner);
+          return false;
+        }
+      }
+      for (const block of this.map.carBlocks) {
+        const car = this.map.cars[block.car];
+        if (!car || car.broken) continue;
+        const hit = closest(block.x, block.z);
+        if (hit.d < block.radius + 0.2 && hit.y > car.y - 0.2 && hit.y < car.y + 1.5) {
+          this.damageWorldCar(car, carDamage);
           return false;
         }
       }
@@ -1691,7 +1710,7 @@ class Match {
       v.seats.filter(Boolean).length
     ]);
     const bbs = this.bbs.map((bb) => [bb.id, bb.owner, bb.catalogIndex, round2(bb.x), round2(bb.y), round2(bb.z), Math.ceil(bb.hp), bb.maxHp, bb.rider || 0, round2(bb.yaw), BB_KIND_CODE[bb.kind]]);
-    const proj = this.projectiles.map((pr) => [pr.id, round2(pr.x), round2(pr.y), round2(pr.z)]);
+    const proj = this.projectiles.map((pr) => [pr.id, round2(pr.x), round2(pr.y), round2(pr.z), pr.item === "Bazooka" || pr.item === "Tank Gun" ? 1 : 0]);
     const rocks = this.rocks.map((rock) => [rock.id, rock.x, rock.z, rock.hitAt - now]);
     const events = this.events;
     this.events = [];
