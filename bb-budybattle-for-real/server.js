@@ -79,9 +79,13 @@ async function applyWalletGrants() {
     if (!account) continue;
     const next = ensureAccountFields(account);
     if (next.grantsApplied.includes(grant.id)) continue;
-    next.shopCoins = Math.max(0, Math.floor(Number(grant.coins) || 0));
-    next.shopDiamonds = Math.max(0, Math.floor(Number(grant.diamonds) || 0));
-    next.shopInventory = grant.inventory && typeof grant.inventory === "object" ? grant.inventory : {};
+    if (grant.addCoins !== undefined) {
+      next.shopCoins = Math.max(0, next.shopCoins + Math.floor(Number(grant.addCoins) || 0));
+    } else {
+      next.shopCoins = Math.max(0, Math.floor(Number(grant.coins) || 0));
+      next.shopDiamonds = Math.max(0, Math.floor(Number(grant.diamonds) || 0));
+      next.shopInventory = grant.inventory && typeof grant.inventory === "object" ? grant.inventory : {};
+    }
     next.shopSynced = true;
     next.grantsApplied = [...next.grantsApplied, grant.id];
     await store.save(next);
