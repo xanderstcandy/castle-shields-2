@@ -1588,7 +1588,8 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     camPan: new THREE.Vector2(0, 0),
     camZoom: 1,
     aimYaw: 0,
-    aimPitch: 0.12,
+    aimPitch: 0,
+    pitchNudge: 0,
     attackHeld: false,
     rightDrag: null,
     shopOpen: false,
@@ -2360,7 +2361,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     g.mouse.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
     if (g.rightDrag) {
       g.camYaw -= (event.clientX - g.rightDrag.x) * 0.006;
-      g.aimPitch = Math.max(CAM_PITCH_MIN, Math.min(CAM_PITCH_MAX, g.aimPitch - (event.clientY - g.rightDrag.y) * 0.004));
+      g.pitchNudge = Math.max(CAM_PITCH_MIN, Math.min(CAM_PITCH_MAX, g.pitchNudge - (event.clientY - g.rightDrag.y) * 0.004));
       g.rightDrag = { x: event.clientX, y: event.clientY };
     }
   });
@@ -2823,6 +2824,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     let lookAt;
 
     if (scoped) {
+      root.classList.toggle("scope-active", true);
       const head = aimOrigin();
       let dir = aim.clone().sub(head);
       if (dir.lengthSq() < 0.16) dir = aimDirection().multiplyScalar(40);
@@ -2856,11 +2858,13 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       g.aimYaw = Math.atan2(dir.x, dir.z);
       g.aimPitch = Math.max(CAM_PITCH_MIN, Math.min(CAM_PITCH_MAX, Math.asin(dir.y)));
     } else {
+      root.classList.toggle("scope-active", false);
       const panGoal = new THREE.Vector2(g.mouse.x, 0);
       g.camPan.lerp(panGoal, Math.min(1, dt * 3));
-      const pitchGoal = CAM_PITCH_MIN + (g.mouse.y + 1) * 0.5 * (CAM_PITCH_MAX - CAM_PITCH_MIN);
-      g.aimPitch += (pitchGoal - g.aimPitch) * Math.min(1, dt * 8);
-      g.aimYaw = g.camYaw + g.mouse.x * AIM_YAW_MOUSE;
+      const aimPitch = Math.max(
+        CAM_PITCH_MIN,
+        Math.min(CAM_PITCH_MAX, g.mouse.y * CAM_PITCH_MAX + g.pitchNudge)
+      );
       const sideX = -Math.cos(g.camYaw);
       const sideZ = Math.sin(g.camYaw);
       const panSide = g.camPan.x * CAMERA_PAN_SIDE;
@@ -2873,23 +2877,27 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
         orbit.y + height,
         orbit.z + sideZ * panSide - Math.cos(g.camYaw) * distance
       );
-      const minY = Math.max(BBMapGen.terrainHeight(map, desired.x, desired.z), self.group.position.y) + 1;
-      desired.y = Math.max(desired.y, minY);
       camera.position.lerp(desired, Math.min(1, dt * 10));
       if (g.shake > 0) {
         camera.position.x += (Math.random() - 0.5) * g.shake;
         camera.position.y += (Math.random() - 0.5) * g.shake;
         g.shake = Math.max(0, g.shake - dt * 1.5);
       }
-      lookAt = aimOrigin().add(aimDirection().multiplyScalar(48));
-      camera.lookAt(lookAt);
+      const chest = orbit.clone();
+      chest.y += 0.35;
+      camera.up.set(0, 1, 0);
+      camera.lookAt(chest);
+      camera.rotateY(g.mouse.x * AIM_YAW_MOUSE);
+      camera.rotateX(-aimPitch);
       if (camera.fov !== 60) {
         camera.fov = 60;
         camera.updateProjectionMatrix();
       }
-      g.aimPitch = Math.max(CAM_PITCH_MIN, Math.min(CAM_PITCH_MAX, g.aimPitch));
-      crosshair.style.left = `${(g.mouse.x * 0.5 + 0.5) * 100}%`;
-      crosshair.style.top = `${(-g.mouse.y * 0.5 + 0.5) * 100}%`;
+      const aimDir = new THREE.Vector3();
+      camera.getWorldDirection(aimDir);
+      g.aimYaw = Math.atan2(aimDir.x, aimDir.z);
+      g.aimPitch = Math.max(CAM_PITCH_MIN, Math.min(CAM_PITCH_MAX, Math.asin(aimDir.y)));
+      lookAt = camera.position.clone().add(aimDir.multiplyScalar(40));
     }
 
     sun.position.set(lookAt.x + 60, lookAt.y + 120, lookAt.z + 40);
