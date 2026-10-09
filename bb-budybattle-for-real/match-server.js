@@ -627,7 +627,7 @@ class Match {
     if (!spec.gun || now < v.gunReadyAt) return;
     v.gunReadyAt = now + spec.gun.cooldownMs;
     const yaw = p.input.yaw;
-    const pitch = p.input.pitch;
+    const pitch = Math.max(0, p.input.pitch);
     v.aim = yaw;
     this.projectiles.push({
       id: this.nextId++,
