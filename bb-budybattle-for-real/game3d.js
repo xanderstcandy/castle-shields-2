@@ -2230,20 +2230,27 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     );
   }
 
-  function cursorAimPoint() {
+  function cursorRayAimPoint(maxDist = 200) {
     const self = g.players.get(g.myId);
     if (!self) return new THREE.Vector3();
-    if (g.camPitch > 0.05 || g.mouse.y > 0.2) {
-      return aimOrigin().add(aimDirection().multiplyScalar(80));
-    }
     const ray = cursorRay().ray;
     const point = new THREE.Vector3();
     const capY = self.group.position.y + 0.5;
-    for (let t = 1; t < 320; t += 0.75) {
+    for (let t = 1; t < maxDist; t += 0.75) {
       ray.at(t, point);
       if (point.y <= BBMapGen.groundHeight(map, point.x, point.z, Math.min(point.y, capY))) return point;
     }
-    return ray.at(120, point);
+    return ray.at(maxDist, point);
+  }
+
+  function cursorAimPoint() {
+    const self = g.players.get(g.myId);
+    if (!self) return new THREE.Vector3();
+    if (g.scope) return cursorRayAimPoint();
+    if (g.camPitch > 0.05 || g.mouse.y > 0.2) {
+      return aimOrigin().add(aimDirection().multiplyScalar(80));
+    }
+    return cursorRayAimPoint(120);
   }
 
   function tryDoubleClickPickup() {
@@ -2800,62 +2807,98 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     }
     const scopeFov = g.scope && g.me ? WEAPON_SCOPE_FOV[g.me.inv[g.me.held]] : undefined;
     const scoped = Boolean(scopeFov);
-    const panGoal = scoped ? new THREE.Vector2(0, 0) : new THREE.Vector2(g.mouse.x, 0);
-    g.camPan.lerp(panGoal, Math.min(1, dt * 3));
-    const pitchGoal = scoped ? 0 : Math.max(CAM_PITCH_MIN, Math.min(CAM_PITCH_MAX, g.mouse.y * 1.05));
-    g.camPitch += (pitchGoal - g.camPitch) * Math.min(1, dt * 8);
-    const sideX = -Math.cos(g.camYaw);
-    const sideZ = Math.sin(g.camYaw);
-    const panSide = g.camPan.x * CAMERA_PAN_SIDE;
-    const orbit = self.group.position.clone();
-    orbit.y += 1.5;
-    const lookAt = new THREE.Vector3(
-      orbit.x + sideX * panSide + Math.sin(g.camYaw) * Math.cos(g.camPitch) * 2,
-      orbit.y + 0.4 + Math.sin(g.camPitch) * 10,
-      orbit.z + sideZ * panSide + Math.cos(g.camYaw) * Math.cos(g.camPitch) * 2
-    );
     const mount = self.mountId ? g.bbs.get(self.mountId) : null;
     const rideBoost = mount ? mount.model.height : self.vehicleId ? 2 : 0;
-    const distance = scoped ? 4 : CAMERA_DISTANCE + rideBoost * 1.3;
-    const height = scoped ? 3 : CAMERA_HEIGHT + rideBoost * 0.9;
-    const back = Math.cos(g.camPitch) * distance;
-    const lift = Math.sin(g.camPitch) * distance * 0.35;
-    const desired = new THREE.Vector3(
-      lookAt.x - Math.sin(g.camYaw) * back,
-      lookAt.y + height - lift,
-      lookAt.z - Math.cos(g.camYaw) * back
-    );
-    const minY = Math.max(BBMapGen.terrainHeight(map, desired.x, desired.z), self.group.position.y) + 1;
-    desired.y = Math.max(desired.y, minY);
-    camera.position.lerp(desired, Math.min(1, dt * 10));
-    if (g.shake > 0) {
-      camera.position.x += (Math.random() - 0.5) * g.shake;
-      camera.position.y += (Math.random() - 0.5) * g.shake;
-      g.shake = Math.max(0, g.shake - dt * 1.5);
+    const aim = cursorAimPoint();
+    const crosshair = hud("crosshair");
+    let lookAt;
+
+    if (scoped) {
+      const head = aimOrigin();
+      let dir = aim.clone().sub(head);
+      if (dir.lengthSq() < 0.16) dir = aimDirection().multiplyScalar(40);
+      dir.normalize();
+      const flatLen = Math.hypot(dir.x, dir.z) || 1;
+      const scopedBack = 2.6 + rideBoost * 0.35;
+      const desired = new THREE.Vector3(
+        head.x - (dir.x / flatLen) * scopedBack,
+        head.y + 0.55 + rideBoost * 0.25,
+        head.z - (dir.z / flatLen) * scopedBack
+      );
+      const minY = Math.max(BBMapGen.terrainHeight(map, desired.x, desired.z), self.group.position.y) + 0.6;
+      desired.y = Math.max(desired.y, minY);
+      lookAt = aim;
+      camera.position.lerp(desired, Math.min(1, dt * 14));
+      if (g.shake > 0) {
+        camera.position.x += (Math.random() - 0.5) * g.shake * 0.35;
+        camera.position.y += (Math.random() - 0.5) * g.shake * 0.35;
+        g.shake = Math.max(0, g.shake - dt * 1.5);
+      }
+      camera.lookAt(lookAt);
+      const fovRad = (scopeFov * Math.PI) / 180;
+      camera.rotateY(-Math.atan(Math.tan(fovRad * 0.5 * camera.aspect) * g.mouse.x));
+      camera.rotateX(Math.atan(Math.tan(fovRad * 0.5) * g.mouse.y));
+      if (camera.fov !== scopeFov) {
+        camera.fov = scopeFov;
+        camera.updateProjectionMatrix();
+      }
+      crosshair.style.left = `${(g.mouse.x * 0.5 + 0.5) * 100}%`;
+      crosshair.style.top = `${(-g.mouse.y * 0.5 + 0.5) * 100}%`;
+      g.aimYaw = Math.atan2(dir.x, dir.z);
+      g.aimPitch = Math.max(-1.2, Math.min(1.2, Math.asin(dir.y)));
+    } else {
+      const panGoal = new THREE.Vector2(g.mouse.x, 0);
+      g.camPan.lerp(panGoal, Math.min(1, dt * 3));
+      const pitchGoal = Math.max(CAM_PITCH_MIN, Math.min(CAM_PITCH_MAX, g.mouse.y * 1.05));
+      g.camPitch += (pitchGoal - g.camPitch) * Math.min(1, dt * 8);
+      const sideX = -Math.cos(g.camYaw);
+      const sideZ = Math.sin(g.camYaw);
+      const panSide = g.camPan.x * CAMERA_PAN_SIDE;
+      const orbit = self.group.position.clone();
+      orbit.y += 1.5;
+      lookAt = new THREE.Vector3(
+        orbit.x + sideX * panSide + Math.sin(g.camYaw) * Math.cos(g.camPitch) * 2,
+        orbit.y + 0.4 + Math.sin(g.camPitch) * 10,
+        orbit.z + sideZ * panSide + Math.cos(g.camYaw) * Math.cos(g.camPitch) * 2
+      );
+      const distance = CAMERA_DISTANCE + rideBoost * 1.3;
+      const height = CAMERA_HEIGHT + rideBoost * 0.9;
+      const back = Math.cos(g.camPitch) * distance;
+      const lift = Math.sin(g.camPitch) * distance * 0.35;
+      const desired = new THREE.Vector3(
+        lookAt.x - Math.sin(g.camYaw) * back,
+        lookAt.y + height - lift,
+        lookAt.z - Math.cos(g.camYaw) * back
+      );
+      const minY = Math.max(BBMapGen.terrainHeight(map, desired.x, desired.z), self.group.position.y) + 1;
+      desired.y = Math.max(desired.y, minY);
+      camera.position.lerp(desired, Math.min(1, dt * 10));
+      if (g.shake > 0) {
+        camera.position.x += (Math.random() - 0.5) * g.shake;
+        camera.position.y += (Math.random() - 0.5) * g.shake;
+        g.shake = Math.max(0, g.shake - dt * 1.5);
+      }
+      camera.lookAt(lookAt);
+      if (camera.fov !== 60) {
+        camera.fov = 60;
+        camera.updateProjectionMatrix();
+      }
+      g.aimYaw = g.camYaw;
+      g.aimPitch = Math.max(CAM_PITCH_MIN, Math.min(CAM_PITCH_MAX, g.camPitch));
+      if (g.camPitch <= 0.05 && g.mouse.y <= 0.2) {
+        const dx = aim.x - self.group.position.x;
+        const dz = aim.z - self.group.position.z;
+        if (Math.hypot(dx, dz) > 0.6) g.aimYaw = Math.atan2(dx, dz);
+        const flat = Math.max(0.5, Math.hypot(dx, dz));
+        g.aimPitch = Math.atan2(aim.y + 1 - (self.group.position.y + 1.3), flat);
+      }
+      const projected = aim.clone().project(camera);
+      crosshair.style.left = `${(projected.x * 0.5 + 0.5) * 100}%`;
+      crosshair.style.top = `${(-projected.y * 0.5 + 0.5) * 100}%`;
     }
-    camera.lookAt(lookAt);
-    const fov = scoped ? scopeFov : 60;
-    if (camera.fov !== fov) {
-      camera.fov = fov;
-      camera.updateProjectionMatrix();
-    }
+
     sun.position.set(lookAt.x + 60, lookAt.y + 120, lookAt.z + 40);
     sun.target.position.copy(lookAt);
-
-    const aim = cursorAimPoint();
-    g.aimYaw = g.camYaw;
-    g.aimPitch = Math.max(CAM_PITCH_MIN, Math.min(CAM_PITCH_MAX, g.camPitch));
-    if (g.camPitch <= 0.05 && g.mouse.y <= 0.2) {
-      const dx = aim.x - self.group.position.x;
-      const dz = aim.z - self.group.position.z;
-      if (Math.hypot(dx, dz) > 0.6) g.aimYaw = Math.atan2(dx, dz);
-      const flat = Math.max(0.5, Math.hypot(dx, dz));
-      g.aimPitch = Math.atan2(aim.y + 1 - (self.group.position.y + 1.3), flat);
-    }
-    const crosshair = hud("crosshair");
-    const projected = aim.clone().project(camera);
-    crosshair.style.left = `${(projected.x * 0.5 + 0.5) * 100}%`;
-    crosshair.style.top = `${(-projected.y * 0.5 + 0.5) * 100}%`;
   }
 
   function sendInput(now) {
