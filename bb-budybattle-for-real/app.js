@@ -1861,12 +1861,14 @@ function handleCoopMessage(msg) {
     const socket = coopSocket;
     coopSocket = null;
     coopReady = false;
-    if (matchSocket && matchSocket !== socket) closeMatchSocket();
+    if (matchSocket && matchSocket !== socket) detachMatchSocket();
     clearPlayBotsWatchdog();
     matchLeaveIntent = false;
     matchDropAuthed = true;
     state.coopParty = null;
-    state.matchQueue = { mode: "zombies", map: "island", count: 0, needed: 0, waitMs: 0, status: "Starting zombie survival..." };
+    if (!msg.resumed) {
+      state.matchQueue = { mode: "zombies", map: "island", count: 0, needed: 0, waitMs: 0, status: "Starting zombie survival..." };
+    }
     bindMatchSocket(socket);
     handleMatchMessage(msg);
   }
@@ -2365,16 +2367,21 @@ let matchDropAuthed = false;
 let pendingPlayBots = false;
 let playBotsWatchdog = null;
 
-function closeMatchSocket() {
+function detachMatchSocket() {
   if (!matchSocket) return;
-  matchLeaveIntent = true;
   clearTimeout(matchReconnectTimer);
   matchReconnectTimer = null;
-  matchReconnectAttempt = 0;
   const socket = matchSocket;
   matchSocket = null;
   socket.onclose = null;
   socket.close();
+}
+
+function closeMatchSocket() {
+  if (!matchSocket) return;
+  matchLeaveIntent = true;
+  matchReconnectAttempt = 0;
+  detachMatchSocket();
 }
 
 function scheduleMatchReconnect() {
@@ -2568,7 +2575,12 @@ function handleMatchMessage(msg) {
     matchDropAuthed = true;
     coopReady = true;
     if (isCoopScreen()) handleCoopMessage(msg);
-    if (state.screen === "match" && window.BBGame && matchSocket) window.BBGame.setSocket(matchSocket);
+    if (state.screen === "match" && window.BBGame && matchSocket) {
+      window.BBGame.setSocket(matchSocket);
+      if (window.BBGame.handleMessage) {
+        window.BBGame.handleMessage({ t: "notice", text: "Could not rejoin your match. It may have ended — head back to the Hub." });
+      }
+    }
     if (state.screen === "queue" && state.matchQueue) {
       state.matchQueue = { ...state.matchQueue, status: "Joining queue..." };
       updateQueueDom();
@@ -2586,6 +2598,8 @@ function handleMatchMessage(msg) {
     updateQueueDom();
   } else if (msg.t === "start") {
     clearPlayBotsWatchdog();
+    matchLeaveIntent = false;
+    matchDropAuthed = true;
     if (!window.BBGame) {
       state.matchQueue = { ...state.matchQueue, status: "The 3D game failed to load. Refresh and try again." };
       updateQueueDom();
@@ -2595,7 +2609,7 @@ function handleMatchMessage(msg) {
       window.BBGame.setSocket(matchSocket);
       return;
     }
-    if (msg.mode !== "fun") consumeOneGameLoadout();
+    if (msg.mode !== "fun" && !msg.resumed) consumeOneGameLoadout();
     state.screen = "match";
     render();
     try {

@@ -1625,10 +1625,16 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     };
     const onOpen = () => {
       sync();
+      g.linkDown = false;
+      g.socketLive = true;
     };
     socket.addEventListener("close", onClose);
     socket.addEventListener("open", onOpen);
     sync();
+    if (socket.readyState === WebSocket.OPEN) {
+      g.linkDown = false;
+      g.socketLive = true;
+    }
     g.unbindSocket = () => {
       socket.removeEventListener("close", onClose);
       socket.removeEventListener("open", onOpen);
@@ -2058,6 +2064,11 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       msg.loot.forEach(addLoot);
       msg.chestsOpen.forEach(openChest);
       applyWorldState(msg);
+      if (g.linkDown) {
+        g.linkDown = false;
+        g.socketLive = g.socket && g.socket.readyState === WebSocket.OPEN;
+        toast("Back in the match.", 2200);
+      }
     } else if (msg.t === "snap") {
       const players = new Map(msg.players.map((row) => [row[0], row]));
       const bbs = new Map(msg.bbs.map((row) => [row[0], row]));

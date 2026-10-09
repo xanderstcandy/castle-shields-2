@@ -1142,6 +1142,7 @@ class Match {
     });
     send(conn.ws, { t: "state", ...this.snapshotState() });
     send(conn.ws, { t: "notice", text: "Reconnected to your match." });
+    this.broadcast();
     return true;
   }
 
@@ -2536,7 +2537,44 @@ function createMatchServer({ wss, verifyAccount, awardStars, coopStore }) {
   wss.on("connection", (ws) => {
     ws.isAlive = true;
     ws.on("pong", () => { ws.isAlive = true; });
-    const conn = { ws, username: "", avatar: "boy-1", loadout: null, queueKey: "", match: null, pendingQueue: null };
+    const conn = { ws, username: "", avatar: "boy-1", loadout: null, queueKey: "", match: null, pendingQueue: null, authed: false, inbox: [] };
+    function flushConnInbox() {
+      const queued = conn.inbox.splice(0);
+      queued.forEach((entry) => dispatchConnMessage(entry));
+    }
+    function dispatchConnMessage(msg) {
+      if (!conn.username) return;
+      if (conn.match && ws.matchPlayer) {
+        conn.match.handleMessage(ws, msg);
+        return;
+      }
+      if (msg.t === "queue") {
+        const drop = normalizeDrop(msg.mode, msg.map);
+        if (!drop) return;
+        joinQueue(conn, drop.mode, drop.map);
+      } else if (msg.t === "leave") {
+        leaveQueue(conn);
+      } else if (msg.t === "friendRequest") {
+        handleFriendRequest(conn, msg.to);
+      } else if (msg.t === "friendAccept") {
+        handleFriendAccept(conn, msg.from);
+      } else if (msg.t === "friendDecline") {
+        handleFriendDecline(conn, String(msg.from || "").trim());
+      } else if (msg.t === "battleInvite") {
+        handleBattleInvite(conn, String(msg.to || "").trim());
+      } else if (msg.t === "battleAccept") {
+        handleBattleAccept(conn, String(msg.from || ""));
+      } else if (msg.t === "battleDecline") {
+        handleBattleDecline(conn, String(msg.from || ""));
+      } else if (msg.t === "squadLeave") {
+        leaveParty(conn);
+        pushParty(conn);
+      } else if (msg.t === "squadStart") {
+        handleSquadStart(conn, Boolean(msg.bots));
+      } else if (msg.t === "partyState") {
+        pushParty(conn);
+      }
+    }
     ws.on("message", (raw) => {
       let msg;
       try {
@@ -2593,8 +2631,12 @@ function createMatchServer({ wss, verifyAccount, awardStars, coopStore }) {
             conn.username = account.username;
             conn.avatar = String(msg.avatar || "boy-1");
             conn.loadout = sanitizeLoadout(msg.loadout);
+            conn.authed = true;
             const resumeMatch = findResumeMatch(account.username);
-            if (resumeMatch && resumeMatch.resumePlayer(conn)) return;
+            if (resumeMatch && resumeMatch.resumePlayer(conn)) {
+              flushConnInbox();
+              return;
+            }
             registerOnline(conn);
             send(ws, { t: "hello-ok" });
             if (conn.pendingQueue) {
@@ -2602,45 +2644,16 @@ function createMatchServer({ wss, verifyAccount, awardStars, coopStore }) {
               conn.pendingQueue = null;
               joinQueue(conn, pending.mode, pending.map);
             }
+            flushConnInbox();
           })
           .catch(() => send(ws, { t: "error", text: "Sign in again to drop in." }));
         return;
       }
-      if (!conn.username) return;
-      if (conn.match && ws.matchPlayer) {
-        conn.match.handleMessage(ws, msg);
+      if (!conn.authed) {
+        if (conn.inbox.length < 48) conn.inbox.push(msg);
         return;
       }
-      if (msg.t === "queue") {
-        const drop = normalizeDrop(msg.mode, msg.map);
-        if (!drop) return;
-        if (!conn.username) {
-          conn.pendingQueue = drop;
-          return;
-        }
-        joinQueue(conn, drop.mode, drop.map);
-      } else if (msg.t === "leave") {
-        leaveQueue(conn);
-      } else if (msg.t === "friendRequest") {
-        handleFriendRequest(conn, msg.to);
-      } else if (msg.t === "friendAccept") {
-        handleFriendAccept(conn, msg.from);
-      } else if (msg.t === "friendDecline") {
-        handleFriendDecline(conn, String(msg.from || "").trim());
-      } else if (msg.t === "battleInvite") {
-        handleBattleInvite(conn, String(msg.to || "").trim());
-      } else if (msg.t === "battleAccept") {
-        handleBattleAccept(conn, String(msg.from || ""));
-      } else if (msg.t === "battleDecline") {
-        handleBattleDecline(conn, String(msg.from || ""));
-      } else if (msg.t === "squadLeave") {
-        leaveParty(conn);
-        pushParty(conn);
-      } else if (msg.t === "squadStart") {
-        handleSquadStart(conn, Boolean(msg.bots));
-      } else if (msg.t === "partyState") {
-        pushParty(conn);
-      }
+      dispatchConnMessage(msg);
     });
     ws.on("close", () => {
       if (conn.social) {
