@@ -615,6 +615,25 @@
     return Math.max(0, Math.min(b.stories, Math.floor((y - b.floor + 0.8) / STORY_H)));
   }
 
+  function inOcean(map, x, z) {
+    const r = Math.hypot(x, z);
+    if (r > coastRadius(map.seed, Math.atan2(z, x)) - 18) return true;
+    return terrainHeight(map, x, z) < 1;
+  }
+
+  function oceanEntryBlocked(mapId) {
+    return mapId !== "island";
+  }
+
+  function clampOutOfOcean(map, pos) {
+    if (!oceanEntryBlocked(map.id) || !inOcean(map, pos.x, pos.z)) return pos;
+    const angle = Math.atan2(pos.z, pos.x);
+    const inland = Math.max(8, coastRadius(map.seed, angle) - 22);
+    pos.x = Math.cos(angle) * inland;
+    pos.z = Math.sin(angle) * inland;
+    return pos;
+  }
+
   function resolveCollision(map, pos, radius, feetY, doors) {
     const extra = activeDoorWalls(doors);
     for (const wall of [...wallsNear(map, pos.x, pos.z), ...extra]) {
@@ -658,6 +677,7 @@
     if (feetY === undefined || feetY < terrainHeight(map, pos.x, pos.z) + 1.4) pushRound(map.carBlocks, 0);
     pos.x = Math.max(-MAP_HALF, Math.min(MAP_HALF, pos.x));
     pos.z = Math.max(-MAP_HALF, Math.min(MAP_HALF, pos.z));
+    clampOutOfOcean(map, pos);
     return pos;
   }
 
@@ -714,12 +734,16 @@
     SLAB_T,
     PLAYER_HEIGHT,
     mulberry32,
+    coastRadius,
     terrainHeight,
     groundHeight,
     ceilingHeight,
     levelAt,
     rampRect,
     hazardAt,
+    inOcean,
+    oceanEntryBlocked,
+    clampOutOfOcean,
     generateMap,
     resolveCollision,
     segmentHitsWall,

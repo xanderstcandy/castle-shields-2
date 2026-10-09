@@ -1556,6 +1556,9 @@ class Match {
     const waterSurface = Math.max(hazard.waterLevel || 0, 0);
     const inHazard = (x, z, y, fireResist) => {
       const ground = mapGen.terrainHeight(this.map, x, z);
+      if (mapGen.oceanEntryBlocked(this.mapId) && mapGen.inOcean(this.map, x, z)) {
+        return { dps: mapGen.LAVA_DPS, cause: "Ocean" };
+      }
       if (waterSurface > 0) {
         const standing = mapGen.groundHeight(this.map, x, z, y);
         const submerged = y < waterSurface + 0.55 || standing < waterSurface + 0.35;
@@ -1728,6 +1731,12 @@ class Match {
     const r = Math.hypot(p.x, p.z);
     if (hazard.waterLevel && ground < hazard.waterLevel + 1.5) {
       goTo(p.x * 0.2, p.z * 0.2);
+      return;
+    }
+    if (mapGen.oceanEntryBlocked(this.mapId) && mapGen.inOcean(this.map, p.x, p.z)) {
+      const angle = Math.atan2(p.z, p.x);
+      const inland = Math.max(8, mapGen.coastRadius(this.map.seed, angle) - 28);
+      goTo(Math.cos(angle) * inland, Math.sin(angle) * inland);
       return;
     }
     if (hazard.lavaRadius && r < hazard.lavaRadius + 18) {
