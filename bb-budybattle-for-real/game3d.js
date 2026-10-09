@@ -12,19 +12,26 @@ const MOVEMENT_KEY_CODES = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "
 const KEY_CAPTURE = { capture: true };
 const CAMERA_DISTANCE = 8.5;
 const CAMERA_HEIGHT = 3.6;
-const CAMERA_LOOK_Y = 0.65;
+const CAMERA_LOOK_Y = 0.5;
+const CAMERA_LOOK_AHEAD = 2.8;
 const CAM_ZOOM_MIN = 0.82;
 const CAM_ZOOM_MAX = 1.18;
 const CAM_ZOOM_STEP = 0.045;
-const CAMERA_PAN_SIDE = 2.2;
-const CAMERA_PAN_FORWARD = 5;
-const MOUSE_TURN_DEADZONE = 0.38;
-const MOUSE_TURN_SPEED = 1.1;
+const CAMERA_PAN_SIDE = 2;
+const MOUSE_EDGE_DEADZONE = 0.58;
+const MOUSE_VIEW_SMOOTH = 2.1;
+const MOUSE_TURN_SPEED = 0.85;
 const CAM_PITCH_MIN = 0;
 const CAM_PITCH_MAX = Math.PI / 2 - 0.12;
-const AIM_YAW_MOUSE = 0.22;
-const AIM_PITCH_MOUSE = 0.48;
+const CAM_PITCH_DOWN_MAX = 0.16;
+const AIM_YAW_EDGE_MAX = 0.36;
 const RIGHT_DRAG_YAW = 0.0032;
+
+function mouseEdgeAmount(value, deadzone = MOUSE_EDGE_DEADZONE) {
+  const abs = Math.abs(value);
+  if (abs <= deadzone) return 0;
+  return Math.sign(value) * ((abs - deadzone) / (1 - deadzone));
+}
 const PICKUP_RANGE = 3.2;
 const SVG_NS = "http://www.w3.org/2000/svg";
 const ROOF_HIDE_RANGE = 12;
@@ -1590,6 +1597,8 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     camYaw: 0,
     camPan: new THREE.Vector2(0, 0),
     camZoom: 1,
+    smoothAimPitch: 0,
+    smoothAimYawOff: 0,
     aimYaw: 0,
     aimPitch: 0,
     attackHeld: false,
@@ -2812,9 +2821,10 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
   function updateCamera(now, dt) {
     const self = g.players.get(g.myId);
     if (!self) return;
-    const turnAmount = Math.abs(g.mouse.x) - MOUSE_TURN_DEADZONE;
-    if (turnAmount > 0 && !g.shopOpen && !g.rightDrag) {
-      g.camYaw -= Math.sign(g.mouse.x) * (turnAmount / (1 - MOUSE_TURN_DEADZONE)) * MOUSE_TURN_SPEED * dt;
+    const edgeX = mouseEdgeAmount(g.mouse.x);
+    const edgeY = mouseEdgeAmount(g.mouse.y);
+    if (edgeX !== 0 && !g.shopOpen && !g.rightDrag) {
+      g.camYaw -= edgeX * MOUSE_TURN_SPEED * dt;
     }
     const scopeFov = g.scope && g.me ? WEAPON_SCOPE_FOV[g.me.inv[g.me.held]] : undefined;
     const scoped = Boolean(scopeFov);
@@ -2848,8 +2858,11 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       }
       camera.lookAt(lookAt);
       const fovRad = (scopeFov * Math.PI) / 180;
-      const scopePitch = Math.max(CAM_PITCH_MIN, Math.min(CAM_PITCH_MAX, Math.max(0, g.mouse.y) * AIM_PITCH_MOUSE));
-      camera.rotateY(-Math.atan(Math.tan(fovRad * 0.5 * camera.aspect) * g.mouse.x * 0.65));
+      const scopePitch = Math.max(
+        -CAM_PITCH_DOWN_MAX,
+        Math.min(CAM_PITCH_MAX, edgeY > 0 ? edgeY * CAM_PITCH_MAX : edgeY * CAM_PITCH_DOWN_MAX)
+      );
+      camera.rotateY(-Math.atan(Math.tan(fovRad * 0.5 * camera.aspect) * edgeX * 0.65));
       camera.rotateX(-Math.atan(Math.tan(fovRad * 0.5) * scopePitch / CAM_PITCH_MAX));
       if (camera.fov !== scopeFov) {
         camera.fov = scopeFov;
@@ -2861,14 +2874,14 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       g.aimPitch = Math.max(CAM_PITCH_MIN, Math.min(CAM_PITCH_MAX, Math.asin(dir.y)));
     } else {
       root.classList.toggle("scope-active", false);
-      const panGoal = new THREE.Vector2(g.mouse.x, 0);
-      g.camPan.lerp(panGoal, Math.min(1, dt * 3));
-      const aimPitch = Math.max(
-        CAM_PITCH_MIN,
-        Math.min(CAM_PITCH_MAX, Math.max(0, g.mouse.y) * AIM_PITCH_MOUSE)
-      );
-      g.aimYaw = g.camYaw + g.mouse.x * AIM_YAW_MOUSE;
-      g.aimPitch = aimPitch;
+      const smooth = Math.min(1, dt * MOUSE_VIEW_SMOOTH);
+      const aimPitchGoal = edgeY > 0 ? edgeY * CAM_PITCH_MAX : edgeY * CAM_PITCH_DOWN_MAX;
+      const aimYawGoal = edgeX * AIM_YAW_EDGE_MAX;
+      g.smoothAimPitch += (aimPitchGoal - g.smoothAimPitch) * smooth;
+      g.smoothAimYawOff += (aimYawGoal - g.smoothAimYawOff) * smooth;
+      g.camPan.lerp(new THREE.Vector2(edgeX, 0), smooth);
+      g.aimPitch = Math.max(-CAM_PITCH_DOWN_MAX, Math.min(CAM_PITCH_MAX, g.smoothAimPitch));
+      g.aimYaw = g.camYaw + g.smoothAimYawOff;
       const sideX = -Math.cos(g.camYaw);
       const sideZ = Math.sin(g.camYaw);
       const panSide = g.camPan.x * CAMERA_PAN_SIDE;
@@ -2889,6 +2902,8 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       }
       const aimPivot = orbit.clone();
       aimPivot.y += CAMERA_LOOK_Y;
+      aimPivot.x += Math.sin(g.camYaw) * CAMERA_LOOK_AHEAD;
+      aimPivot.z += Math.cos(g.camYaw) * CAMERA_LOOK_AHEAD;
       camera.up.set(0, 1, 0);
       camera.lookAt(aimPivot);
       if (camera.fov !== 60) {
