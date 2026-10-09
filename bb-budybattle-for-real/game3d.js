@@ -16,13 +16,15 @@ const CAMERA_LOOK_Y = 0.65;
 const CAM_ZOOM_MIN = 0.82;
 const CAM_ZOOM_MAX = 1.18;
 const CAM_ZOOM_STEP = 0.045;
-const CAMERA_PAN_SIDE = 4;
+const CAMERA_PAN_SIDE = 2.2;
 const CAMERA_PAN_FORWARD = 5;
-const MOUSE_TURN_DEADZONE = 0.3;
-const MOUSE_TURN_SPEED = 2;
-const CAM_PITCH_MIN = -0.35;
-const CAM_PITCH_MAX = Math.PI / 2 - 0.04;
-const AIM_YAW_MOUSE = 0.42;
+const MOUSE_TURN_DEADZONE = 0.38;
+const MOUSE_TURN_SPEED = 1.1;
+const CAM_PITCH_MIN = 0;
+const CAM_PITCH_MAX = Math.PI / 2 - 0.12;
+const AIM_YAW_MOUSE = 0.22;
+const AIM_PITCH_MOUSE = 0.48;
+const RIGHT_DRAG_YAW = 0.0032;
 const PICKUP_RANGE = 3.2;
 const SVG_NS = "http://www.w3.org/2000/svg";
 const ROOF_HIDE_RANGE = 12;
@@ -1590,7 +1592,6 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     camZoom: 1,
     aimYaw: 0,
     aimPitch: 0,
-    pitchNudge: 0,
     attackHeld: false,
     rightDrag: null,
     shopOpen: false,
@@ -2361,8 +2362,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     const rect = canvas.getBoundingClientRect();
     g.mouse.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
     if (g.rightDrag) {
-      g.camYaw -= (event.clientX - g.rightDrag.x) * 0.006;
-      g.pitchNudge = Math.max(CAM_PITCH_MIN, Math.min(CAM_PITCH_MAX, g.pitchNudge - (event.clientY - g.rightDrag.y) * 0.004));
+      g.camYaw -= (event.clientX - g.rightDrag.x) * RIGHT_DRAG_YAW;
       g.rightDrag = { x: event.clientX, y: event.clientY };
     }
   });
@@ -2848,8 +2848,9 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       }
       camera.lookAt(lookAt);
       const fovRad = (scopeFov * Math.PI) / 180;
-      camera.rotateY(-Math.atan(Math.tan(fovRad * 0.5 * camera.aspect) * g.mouse.x));
-      camera.rotateX(Math.atan(Math.tan(fovRad * 0.5) * g.mouse.y));
+      const scopePitch = Math.max(CAM_PITCH_MIN, Math.min(CAM_PITCH_MAX, Math.max(0, g.mouse.y) * AIM_PITCH_MOUSE));
+      camera.rotateY(-Math.atan(Math.tan(fovRad * 0.5 * camera.aspect) * g.mouse.x * 0.65));
+      camera.rotateX(-Math.atan(Math.tan(fovRad * 0.5) * scopePitch / CAM_PITCH_MAX));
       if (camera.fov !== scopeFov) {
         camera.fov = scopeFov;
         camera.updateProjectionMatrix();
@@ -2864,8 +2865,10 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       g.camPan.lerp(panGoal, Math.min(1, dt * 3));
       const aimPitch = Math.max(
         CAM_PITCH_MIN,
-        Math.min(CAM_PITCH_MAX, g.mouse.y * CAM_PITCH_MAX + g.pitchNudge)
+        Math.min(CAM_PITCH_MAX, Math.max(0, g.mouse.y) * AIM_PITCH_MOUSE)
       );
+      g.aimYaw = g.camYaw + g.mouse.x * AIM_YAW_MOUSE;
+      g.aimPitch = aimPitch;
       const sideX = -Math.cos(g.camYaw);
       const sideZ = Math.sin(g.camYaw);
       const panSide = g.camPan.x * CAMERA_PAN_SIDE;
@@ -2888,17 +2891,12 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       aimPivot.y += CAMERA_LOOK_Y;
       camera.up.set(0, 1, 0);
       camera.lookAt(aimPivot);
-      camera.rotateY(g.mouse.x * AIM_YAW_MOUSE);
-      camera.rotateX(-aimPitch);
       if (camera.fov !== 60) {
         camera.fov = 60;
         camera.updateProjectionMatrix();
       }
-      const aimDir = new THREE.Vector3();
-      camera.getWorldDirection(aimDir);
-      g.aimYaw = Math.atan2(aimDir.x, aimDir.z);
-      g.aimPitch = Math.max(CAM_PITCH_MIN, Math.min(CAM_PITCH_MAX, Math.asin(aimDir.y)));
-      lookAt = camera.position.clone().add(aimDir.multiplyScalar(40));
+      const aimDir = aimDirection();
+      lookAt = aimOrigin().add(aimDir.clone().multiplyScalar(40));
     }
 
     sun.position.set(lookAt.x + 60, lookAt.y + 120, lookAt.z + 40);
