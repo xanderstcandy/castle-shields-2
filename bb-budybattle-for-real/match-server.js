@@ -1164,7 +1164,7 @@ class Match {
         mx: Math.max(-1, Math.min(1, Number(msg.mx) || 0)),
         mz: Math.max(-1, Math.min(1, Number(msg.mz) || 0)),
         yaw: Number(msg.yaw) || 0,
-        pitch: Math.max(-0.16, Math.min(Math.PI / 2 - 0.12, Number(msg.pitch) || 0)),
+        pitch: Math.max(-0.07, Math.min(Math.PI / 2 - 0.12, Number(msg.pitch) || 0)),
         jump: Boolean(msg.jump),
         attack: Boolean(msg.attack),
         sprint: Boolean(msg.sprint)
