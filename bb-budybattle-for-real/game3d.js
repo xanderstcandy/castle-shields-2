@@ -10,8 +10,9 @@ const BB_KIND_WILD = 2;
 const BATTLE_TUTORIAL_MS = 30000;
 const MOVEMENT_KEY_CODES = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]);
 const KEY_CAPTURE = { capture: true };
-const CAMERA_DISTANCE = 10;
-const CAMERA_HEIGHT = 6.5;
+const CAMERA_DISTANCE = 8.5;
+const CAMERA_HEIGHT = 3.6;
+const CAMERA_LOOK_Y = 0.65;
 const CAM_ZOOM_MIN = 0.82;
 const CAM_ZOOM_MAX = 1.18;
 const CAM_ZOOM_STEP = 0.045;
@@ -2883,10 +2884,10 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
         camera.position.y += (Math.random() - 0.5) * g.shake;
         g.shake = Math.max(0, g.shake - dt * 1.5);
       }
-      const chest = orbit.clone();
-      chest.y += 0.35;
+      const aimPivot = orbit.clone();
+      aimPivot.y += CAMERA_LOOK_Y;
       camera.up.set(0, 1, 0);
-      camera.lookAt(chest);
+      camera.lookAt(aimPivot);
       camera.rotateY(g.mouse.x * AIM_YAW_MOUSE);
       camera.rotateX(-aimPitch);
       if (camera.fov !== 60) {
