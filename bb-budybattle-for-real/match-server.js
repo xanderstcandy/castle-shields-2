@@ -769,13 +769,13 @@ class Match {
     smash(this.map.lamps, "lamp", range + 0.3, () => WORLD_DROPS.lamp);
     smash(this.map.cars, "car", range + 1.8, () => WORLD_DROPS.car);
     this.map.carBlocks.forEach((block) => { if (this.map.cars[block.car].broken) block.broken = true; });
-    const half = data.BLOCK_SIZE / 2;
     [...this.map.blocks].forEach((block) => {
       if (block.y > p.y + 2.4 || block.y + block.h < p.y - 0.6) return;
-      const nx = Math.max(block.x - half, Math.min(p.x, block.x + half));
-      const nz = Math.max(block.z - half, Math.min(p.z, block.z + half));
+      const halfW = (block.w || data.BLOCK_SIZE) / 2;
+      const nx = Math.max(block.x - halfW, Math.min(p.x, block.x + halfW));
+      const nz = Math.max(block.z - halfW, Math.min(p.z, block.z + halfW));
       if (Math.hypot(nx - p.x, nz - p.z) > data.MELEE_RANGE) return;
-      if (!inFront(block.x, block.z, range + half)) return;
+      if (!inFront(block.x, block.z, range + halfW)) return;
       this.damageBlock(block, damage);
     });
   }
@@ -795,7 +795,18 @@ class Match {
   }
 
   blockPayload(block) {
-    return { id: block.id, mat: block.mat, x: block.x, z: block.z, y: block.y, hp: Math.ceil(block.hp), maxHp: block.maxHp };
+    return {
+      id: block.id,
+      mat: block.mat,
+      x: block.x,
+      z: block.z,
+      y: block.y,
+      w: block.w,
+      d: block.d,
+      h: block.h,
+      hp: Math.ceil(block.hp),
+      maxHp: block.maxHp
+    };
   }
 
   damageBlock(block, damage) {
@@ -814,14 +825,14 @@ class Match {
   blockOnSegment(ax, ay, az, bx, by, bz) {
     if (!this.map.blocks.length) return null;
     const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay, bz - az) / 0.8));
-    const half = data.BLOCK_SIZE / 2;
     for (let i = 1; i <= steps; i += 1) {
       const t = i / steps;
       const x = ax + (bx - ax) * t;
       const y = ay + (by - ay) * t;
       const z = az + (bz - az) * t;
       for (const block of this.map.blocks) {
-        if (Math.abs(x - block.x) <= half && Math.abs(z - block.z) <= half && y >= block.y && y <= block.y + block.h) return block;
+        const halfW = (block.w || data.BLOCK_SIZE) / 2;
+        if (Math.abs(x - block.x) <= halfW && Math.abs(z - block.z) <= halfW && y >= block.y && y <= block.y + block.h) return block;
       }
     }
     return null;
@@ -842,8 +853,7 @@ class Match {
       notice(`Need ${spec.cost} ${spec.item.toLowerCase()} to build (you have ${p[mat]})`);
       return;
     }
-    const size = data.BLOCK_SIZE;
-    const height = data.BLOCK_HEIGHT;
+    const { w: size, d: depth, h: height } = data.buildBlockDimensions(spec);
     const half = size / 2;
     const tx = p.x + Math.sin(p.yaw) * BUILD_REACH;
     const tz = p.z + Math.cos(p.yaw) * BUILD_REACH;
@@ -881,7 +891,7 @@ class Match {
     }
     p[mat] -= spec.cost;
     p.lastBuildAt = now;
-    const block = { id: this.nextId++, mat, owner: p.id, x, z, y: round2(y), w: size, d: size, h: height, hp: spec.hp, maxHp: spec.hp };
+    const block = { id: this.nextId++, mat, owner: p.id, x, z, y: round2(y), w: size, d: depth, h: height, hp: spec.hp, maxHp: spec.hp };
     this.map.blocks.push(block);
     this.events.push({ k: "block+", ...this.blockPayload(block) });
   }
@@ -1154,7 +1164,7 @@ class Match {
         mx: Math.max(-1, Math.min(1, Number(msg.mx) || 0)),
         mz: Math.max(-1, Math.min(1, Number(msg.mz) || 0)),
         yaw: Number(msg.yaw) || 0,
-        pitch: Math.max(-1.2, Math.min(1.2, Number(msg.pitch) || 0)),
+        pitch: Math.max(-0.35, Math.min(Math.PI / 2 - 0.04, Number(msg.pitch) || 0)),
         jump: Boolean(msg.jump),
         attack: Boolean(msg.attack),
         sprint: Boolean(msg.sprint)

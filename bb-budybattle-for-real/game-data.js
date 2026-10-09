@@ -419,6 +419,19 @@ const BUILD_BLOCKS = {
 };
 const BLOCK_SIZE = 2;
 const BLOCK_HEIGHT = 1.5;
+const BUILD_BLOCK_SUPPLY_COST = 5;
+const BUILD_BLOCK_SMALL_SCALE = 0.65;
+
+function buildBlockDimensions(spec) {
+  if (!spec || spec.cost !== BUILD_BLOCK_SUPPLY_COST) {
+    return { w: BLOCK_SIZE, d: BLOCK_SIZE, h: BLOCK_HEIGHT };
+  }
+  return {
+    w: BLOCK_SIZE * BUILD_BLOCK_SMALL_SCALE,
+    d: BLOCK_SIZE * BUILD_BLOCK_SMALL_SCALE,
+    h: BLOCK_HEIGHT * BUILD_BLOCK_SMALL_SCALE
+  };
+}
 const RESOURCE_ITEMS = ["Wood", "Metal"];
 
 const VEHICLES = {
@@ -603,6 +616,7 @@ if (typeof module !== "undefined") {
     BUILD_OPTIONS,
     BLOCK_SIZE,
     BLOCK_HEIGHT,
+    buildBlockDimensions,
     RESOURCE_ITEMS,
     isResourceName
   };

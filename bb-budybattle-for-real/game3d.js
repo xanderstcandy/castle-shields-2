@@ -12,12 +12,15 @@ const MOVEMENT_KEY_CODES = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "
 const KEY_CAPTURE = { capture: true };
 const CAMERA_DISTANCE = 10;
 const CAMERA_HEIGHT = 6.5;
+const CAM_ZOOM_MIN = 0.82;
+const CAM_ZOOM_MAX = 1.18;
+const CAM_ZOOM_STEP = 0.045;
 const CAMERA_PAN_SIDE = 4;
 const CAMERA_PAN_FORWARD = 5;
 const MOUSE_TURN_DEADZONE = 0.3;
 const MOUSE_TURN_SPEED = 2;
 const CAM_PITCH_MIN = -0.35;
-const CAM_PITCH_MAX = 1.15;
+const CAM_PITCH_MAX = Math.PI / 2 - 0.04;
 const PICKUP_RANGE = 3.2;
 const SVG_NS = "http://www.w3.org/2000/svg";
 const ROOF_HIDE_RANGE = 12;
@@ -1395,21 +1398,28 @@ function hideBreakable(entry) {
   return true;
 }
 
-const BLOCK_GEOMETRY = new THREE.BoxGeometry(BLOCK_SIZE, BLOCK_HEIGHT, BLOCK_SIZE);
-const BLOCK_EDGES = new THREE.EdgesGeometry(BLOCK_GEOMETRY);
 const BLOCK_LOOKS = {
   wood: { color: 0xa0703c, edge: 0x5b3a1a, roughness: 0.9, metalness: 0 },
   metal: { color: 0x9ca3af, edge: 0x4b5563, roughness: 0.35, metalness: 0.75 }
 };
 
+function blockDims(block) {
+  return {
+    w: block.w || BLOCK_SIZE,
+    d: block.d || block.w || BLOCK_SIZE,
+    h: block.h || BLOCK_HEIGHT
+  };
+}
+
 function buildBlockMesh(block) {
   const look = BLOCK_LOOKS[block.mat] || BLOCK_LOOKS.wood;
+  const { w, d, h } = blockDims(block);
   const material = new THREE.MeshStandardMaterial({ color: look.color, roughness: look.roughness, metalness: look.metalness });
-  const mesh = new THREE.Mesh(BLOCK_GEOMETRY, material);
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
-  mesh.add(new THREE.LineSegments(BLOCK_EDGES, new THREE.LineBasicMaterial({ color: look.edge })));
-  mesh.position.set(block.x, block.y + BLOCK_HEIGHT / 2, block.z);
+  mesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry), new THREE.LineBasicMaterial({ color: look.edge })));
+  mesh.position.set(block.x, block.y + h / 2, block.z);
   mesh.userData = { look, maxHp: block.maxHp };
   tintBlock(mesh, block.hp);
   return mesh;
@@ -1470,7 +1480,7 @@ function renderHudShell(root) {
     <div class="mh-toast" data-hud-toast></div>
     <div class="mh-prompt" data-hud-prompt></div>
     <div class="mh-hotbar" data-hud-hotbar></div>
-    <div class="mh-help">WASD / arrows move · mouse aims · click attack · Space jump · 1-8 or wheel switch · Enter door / pick up · Backspace drop · Shift sprint · Q shop · E build · F switch block/vehicle · R ride B.B.s / get in vehicles · right-drag turn camera · Z scope</div>
+    <div class="mh-help">WASD / arrows move · mouse aims · click attack · Space jump · 1-8 switch gear · scroll zoom · Enter door / pick up · Backspace drop · Shift sprint · Q shop · E build · F switch block/vehicle · R ride B.B.s / get in vehicles · right-drag turn camera · Z scope</div>
     </div>
     <div class="mh-shop" data-hud-shop hidden></div>
   `);
@@ -1527,7 +1537,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
   tutorialEl.hidden = true;
   tutorialEl.innerHTML = `
     <p class="mh-tutorial-title">First drop — controls</p>
-    <p class="mh-tutorial-body"><strong>Move</strong> WASD or arrow keys · <strong>Aim</strong> mouse · <strong>Attack</strong> click · <strong>Jump</strong> Space · <strong>Switch gear</strong> 1–8 or scroll wheel · <strong>Doors / pick up</strong> Enter · <strong>Drop item</strong> Backspace · <strong>Shop</strong> Q · <strong>Build</strong> E (F swaps wood/metal — smash trees, cars, lights and furniture for materials) · <strong>Ride big B.B.s</strong> R · <strong>Turn camera</strong> right-drag · <strong>Scope</strong> Z</p>
+    <p class="mh-tutorial-body"><strong>Move</strong> WASD or arrow keys · <strong>Aim</strong> mouse · <strong>Attack</strong> click · <strong>Jump</strong> Space · <strong>Switch gear</strong> 1–8 · <strong>Zoom</strong> scroll wheel · <strong>Doors / pick up</strong> Enter · <strong>Drop item</strong> Backspace · <strong>Shop</strong> Q · <strong>Build</strong> E (F swaps wood/metal — smash trees, cars, lights and furniture for materials) · <strong>Ride big B.B.s</strong> R · <strong>Turn camera</strong> right-drag · <strong>Scope</strong> Z</p>
     <button class="mh-tutorial-btn" type="button" data-action="dismiss-battle-tutorial">Got it!</button>
   `;
   root.appendChild(tutorialEl);
@@ -1576,6 +1586,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     camYaw: 0,
     camPan: new THREE.Vector2(0, 0),
     camPitch: 0.12,
+    camZoom: 1,
     aimYaw: 0,
     aimPitch: 0,
     attackHeld: false,
@@ -1997,7 +2008,8 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     const mesh = buildBlockMesh(block);
     scene.add(mesh);
     g.blocks.set(block.id, mesh);
-    map.blocks.push({ id: block.id, x: block.x, z: block.z, y: block.y, w: BLOCK_SIZE, d: BLOCK_SIZE, h: BLOCK_HEIGHT });
+    const dims = blockDims(block);
+    map.blocks.push({ id: block.id, x: block.x, z: block.z, y: block.y, w: dims.w, d: dims.d, h: dims.h });
   }
 
   function removeBlock(id, withPoof) {
@@ -2379,10 +2391,10 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     if (tryDoubleClickPickup()) g.attackHeld = false;
   });
   on(canvas, "wheel", (event) => {
-    if (!g.me) return;
+    if (!g.me || g.shopOpen) return;
     event.preventDefault();
     const dir = event.deltaY > 0 ? 1 : -1;
-    selectSlot((g.me.held + dir + MATCH_INVENTORY_SLOTS) % MATCH_INVENTORY_SLOTS);
+    g.camZoom = Math.max(CAM_ZOOM_MIN, Math.min(CAM_ZOOM_MAX, g.camZoom + dir * CAM_ZOOM_STEP));
   }, { passive: false });
   on(root, "click", (event) => {
     const slot = event.target.closest("[data-hud-slot]");
@@ -2819,7 +2831,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       if (dir.lengthSq() < 0.16) dir = aimDirection().multiplyScalar(40);
       dir.normalize();
       const flatLen = Math.hypot(dir.x, dir.z) || 1;
-      const scopedBack = 2.6 + rideBoost * 0.35;
+      const scopedBack = (2.6 + rideBoost * 0.35) * g.camZoom;
       const desired = new THREE.Vector3(
         head.x - (dir.x / flatLen) * scopedBack,
         head.y + 0.55 + rideBoost * 0.25,
@@ -2845,11 +2857,11 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       crosshair.style.left = `${(g.mouse.x * 0.5 + 0.5) * 100}%`;
       crosshair.style.top = `${(-g.mouse.y * 0.5 + 0.5) * 100}%`;
       g.aimYaw = Math.atan2(dir.x, dir.z);
-      g.aimPitch = Math.max(-1.2, Math.min(1.2, Math.asin(dir.y)));
+      g.aimPitch = Math.max(CAM_PITCH_MIN, Math.min(CAM_PITCH_MAX, Math.asin(dir.y)));
     } else {
       const panGoal = new THREE.Vector2(g.mouse.x, 0);
       g.camPan.lerp(panGoal, Math.min(1, dt * 3));
-      const pitchGoal = Math.max(CAM_PITCH_MIN, Math.min(CAM_PITCH_MAX, g.mouse.y * 1.05));
+      const pitchGoal = CAM_PITCH_MIN + (g.mouse.y + 1) * 0.5 * (CAM_PITCH_MAX - CAM_PITCH_MIN);
       g.camPitch += (pitchGoal - g.camPitch) * Math.min(1, dt * 8);
       const sideX = -Math.cos(g.camYaw);
       const sideZ = Math.sin(g.camYaw);
@@ -2861,8 +2873,8 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
         orbit.y + 0.4 + Math.sin(g.camPitch) * 10,
         orbit.z + sideZ * panSide + Math.cos(g.camYaw) * Math.cos(g.camPitch) * 2
       );
-      const distance = CAMERA_DISTANCE + rideBoost * 1.3;
-      const height = CAMERA_HEIGHT + rideBoost * 0.9;
+      const distance = (CAMERA_DISTANCE + rideBoost * 1.3) * g.camZoom;
+      const height = (CAMERA_HEIGHT + rideBoost * 0.9) * g.camZoom;
       const back = Math.cos(g.camPitch) * distance;
       const lift = Math.sin(g.camPitch) * distance * 0.35;
       const desired = new THREE.Vector3(
