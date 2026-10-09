@@ -12,8 +12,6 @@ const MOVEMENT_KEY_CODES = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "
 const KEY_CAPTURE = { capture: true };
 const CAMERA_DISTANCE = 8.5;
 const CAMERA_HEIGHT = 3.6;
-const CAMERA_LOOK_Y = 0.5;
-const CAMERA_LOOK_AHEAD = 2.8;
 const CAM_ZOOM_MIN = 0.82;
 const CAM_ZOOM_MAX = 1.18;
 const CAM_ZOOM_STEP = 0.045;
@@ -24,6 +22,7 @@ const MOUSE_TURN_SPEED = 0.85;
 const CAM_PITCH_MIN = 0;
 const CAM_PITCH_MAX = Math.PI / 2 - 0.12;
 const CAM_PITCH_DOWN_MAX = 0.16;
+const AIM_YAW_MOUSE = 0.42;
 const RIGHT_DRAG_YAW = 0.0032;
 
 function mouseEdgeAmount(value, deadzone = MOUSE_EDGE_DEADZONE_X) {
@@ -2264,6 +2263,11 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     return ray.at(maxDist, point);
   }
 
+  function syncAimFromMouse() {
+    g.aimPitch = Math.max(-CAM_PITCH_DOWN_MAX, Math.min(CAM_PITCH_MAX, g.mouse.y * CAM_PITCH_MAX));
+    g.aimYaw = g.camYaw + g.mouse.x * AIM_YAW_MOUSE;
+  }
+
   function syncAimFromCursorRay(maxDist = 160) {
     const origin = aimOrigin();
     const hit = cursorRayAimPoint(maxDist);
@@ -2280,7 +2284,8 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
   function cursorAimPoint() {
     const self = g.players.get(g.myId);
     if (!self) return new THREE.Vector3();
-    return cursorRayAimPoint();
+    if (g.scope) return cursorRayAimPoint();
+    return aimOrigin().add(aimDirection().multiplyScalar(80));
   }
 
   function tryDoubleClickPickup() {
@@ -2897,19 +2902,15 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
         camera.position.y += (Math.random() - 0.5) * g.shake;
         g.shake = Math.max(0, g.shake - dt * 1.5);
       }
-      const aimPivot = orbit.clone();
-      aimPivot.y += CAMERA_LOOK_Y;
-      aimPivot.x += Math.sin(g.camYaw) * CAMERA_LOOK_AHEAD;
-      aimPivot.z += Math.cos(g.camYaw) * CAMERA_LOOK_AHEAD;
+      syncAimFromMouse();
+      const aimDir = aimDirection();
+      lookAt = aimOrigin().add(aimDir.clone().multiplyScalar(48));
       camera.up.set(0, 1, 0);
-      camera.lookAt(aimPivot);
+      camera.lookAt(lookAt);
       if (camera.fov !== 60) {
         camera.fov = 60;
         camera.updateProjectionMatrix();
       }
-      syncAimFromCursorRay();
-      const aimDir = aimDirection();
-      lookAt = aimOrigin().add(aimDir.clone().multiplyScalar(40));
     }
 
     sun.position.set(lookAt.x + 60, lookAt.y + 120, lookAt.z + 40);
