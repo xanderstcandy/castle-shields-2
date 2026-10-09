@@ -22,8 +22,17 @@ const MOUSE_TURN_SPEED = 0.85;
 const CAM_PITCH_MIN = 0;
 const CAM_PITCH_MAX = Math.PI / 2 - 0.12;
 const CAM_PITCH_DOWN_MAX = 0.16;
-const AIM_YAW_MOUSE = 0.42;
+const MOUSE_PITCH_DEADZONE = 0.12;
+const VIEW_PITCH_SMOOTH = 3.4;
 const RIGHT_DRAG_YAW = 0.0032;
+
+function mousePitchGoal(mouseY) {
+  const abs = Math.abs(mouseY);
+  if (abs <= MOUSE_PITCH_DEADZONE) return 0;
+  const amount = (abs - MOUSE_PITCH_DEADZONE) / (1 - MOUSE_PITCH_DEADZONE);
+  if (mouseY > 0) return amount * CAM_PITCH_MAX;
+  return -amount * CAM_PITCH_DOWN_MAX;
+}
 
 function mouseEdgeAmount(value, deadzone = MOUSE_EDGE_DEADZONE_X) {
   const abs = Math.abs(value);
@@ -1595,6 +1604,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     camYaw: 0,
     camPan: new THREE.Vector2(0, 0),
     camZoom: 1,
+    viewPitch: 0,
     aimYaw: 0,
     aimPitch: 0,
     attackHeld: false,
@@ -2263,11 +2273,6 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     return ray.at(maxDist, point);
   }
 
-  function syncAimFromMouse() {
-    g.aimPitch = Math.max(-CAM_PITCH_DOWN_MAX, Math.min(CAM_PITCH_MAX, g.mouse.y * CAM_PITCH_MAX));
-    g.aimYaw = g.camYaw + g.mouse.x * AIM_YAW_MOUSE;
-  }
-
   function syncAimFromCursorRay(maxDist = 160) {
     const origin = aimOrigin();
     const hit = cursorRayAimPoint(maxDist);
@@ -2902,11 +2907,20 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
         camera.position.y += (Math.random() - 0.5) * g.shake;
         g.shake = Math.max(0, g.shake - dt * 1.5);
       }
-      syncAimFromMouse();
-      const aimDir = aimDirection();
-      lookAt = aimOrigin().add(aimDir.clone().multiplyScalar(48));
+      const pitchGoal = mousePitchGoal(g.mouse.y);
+      g.viewPitch += (pitchGoal - g.viewPitch) * Math.min(1, dt * VIEW_PITCH_SMOOTH);
+      const look = orbit.clone();
+      look.x += Math.sin(g.camYaw) * 7;
+      look.y += 0.2;
+      look.z += Math.cos(g.camYaw) * 7;
       camera.up.set(0, 1, 0);
-      camera.lookAt(lookAt);
+      camera.lookAt(look);
+      camera.rotateX(-g.viewPitch);
+      const aimDir = new THREE.Vector3();
+      camera.getWorldDirection(aimDir);
+      g.aimYaw = Math.atan2(aimDir.x, aimDir.z);
+      g.aimPitch = Math.max(-CAM_PITCH_DOWN_MAX, Math.min(CAM_PITCH_MAX, Math.asin(Math.max(-1, Math.min(1, aimDir.y)))));
+      lookAt = camera.position.clone().add(aimDir.multiplyScalar(40));
       if (camera.fov !== 60) {
         camera.fov = 60;
         camera.updateProjectionMatrix();
