@@ -16,6 +16,8 @@ const CAMERA_PAN_SIDE = 4;
 const CAMERA_PAN_FORWARD = 5;
 const MOUSE_TURN_DEADZONE = 0.3;
 const MOUSE_TURN_SPEED = 2;
+const CAM_PITCH_MIN = -0.35;
+const CAM_PITCH_MAX = 1.15;
 const PICKUP_RANGE = 3.2;
 const SVG_NS = "http://www.w3.org/2000/svg";
 const ROOF_HIDE_RANGE = 12;
@@ -1573,6 +1575,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     mouse: new THREE.Vector2(0, 0),
     camYaw: 0,
     camPan: new THREE.Vector2(0, 0),
+    camPitch: 0.12,
     aimYaw: 0,
     aimPitch: 0,
     attackHeld: false,
@@ -2212,11 +2215,30 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     return raycaster;
   }
 
-  function cursorGroundPoint() {
+  function aimOrigin() {
+    const self = g.players.get(g.myId);
+    const origin = self ? self.group.position.clone() : new THREE.Vector3();
+    origin.y += 1.3;
+    return origin;
+  }
+
+  function aimDirection() {
+    return new THREE.Vector3(
+      Math.sin(g.camYaw) * Math.cos(g.camPitch),
+      Math.sin(g.camPitch),
+      Math.cos(g.camYaw) * Math.cos(g.camPitch)
+    );
+  }
+
+  function cursorAimPoint() {
+    const self = g.players.get(g.myId);
+    if (!self) return new THREE.Vector3();
+    if (g.camPitch > 0.05 || g.mouse.y > 0.2) {
+      return aimOrigin().add(aimDirection().multiplyScalar(80));
+    }
     const ray = cursorRay().ray;
     const point = new THREE.Vector3();
-    const self = g.players.get(g.myId);
-    const capY = self ? self.group.position.y + 0.5 : Infinity;
+    const capY = self.group.position.y + 0.5;
     for (let t = 1; t < 320; t += 0.75) {
       ray.at(t, point);
       if (point.y <= BBMapGen.groundHeight(map, point.x, point.z, Math.min(point.y, capY))) return point;
@@ -2321,15 +2343,16 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     const rect = canvas.getBoundingClientRect();
     g.mouse.set(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
     if (g.rightDrag) {
-      g.camYaw -= (event.clientX - g.rightDrag) * 0.006;
-      g.rightDrag = event.clientX;
+      g.camYaw -= (event.clientX - g.rightDrag.x) * 0.006;
+      g.camPitch = Math.max(CAM_PITCH_MIN, Math.min(CAM_PITCH_MAX, g.camPitch - (event.clientY - g.rightDrag.y) * 0.004));
+      g.rightDrag = { x: event.clientX, y: event.clientY };
     }
   });
   on(canvas, "mouseleave", () => g.mouse.set(0, 0));
   on(canvas, "mousedown", (event) => {
     focusMatchView();
     if (event.button === 2) {
-      g.rightDrag = event.clientX;
+      g.rightDrag = { x: event.clientX, y: event.clientY };
       return;
     }
     if (event.button !== 0 || g.shopOpen) return;
@@ -2777,25 +2800,30 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     }
     const scopeFov = g.scope && g.me ? WEAPON_SCOPE_FOV[g.me.inv[g.me.held]] : undefined;
     const scoped = Boolean(scopeFov);
-    const panGoal = scoped ? new THREE.Vector2(0, 0) : g.mouse;
+    const panGoal = scoped ? new THREE.Vector2(0, 0) : new THREE.Vector2(g.mouse.x, 0);
     g.camPan.lerp(panGoal, Math.min(1, dt * 3));
+    const pitchGoal = scoped ? 0 : Math.max(CAM_PITCH_MIN, Math.min(CAM_PITCH_MAX, g.mouse.y * 1.05));
+    g.camPitch += (pitchGoal - g.camPitch) * Math.min(1, dt * 8);
     const sideX = -Math.cos(g.camYaw);
     const sideZ = Math.sin(g.camYaw);
     const panSide = g.camPan.x * CAMERA_PAN_SIDE;
-    const panForward = g.camPan.y * CAMERA_PAN_FORWARD;
-    const target = self.group.position.clone().add(new THREE.Vector3(
-      sideX * panSide + Math.sin(g.camYaw) * panForward,
-      1.6,
-      sideZ * panSide + Math.cos(g.camYaw) * panForward
-    ));
+    const orbit = self.group.position.clone();
+    orbit.y += 1.5;
+    const lookAt = new THREE.Vector3(
+      orbit.x + sideX * panSide + Math.sin(g.camYaw) * Math.cos(g.camPitch) * 2,
+      orbit.y + 0.4 + Math.sin(g.camPitch) * 10,
+      orbit.z + sideZ * panSide + Math.cos(g.camYaw) * Math.cos(g.camPitch) * 2
+    );
     const mount = self.mountId ? g.bbs.get(self.mountId) : null;
     const rideBoost = mount ? mount.model.height : self.vehicleId ? 2 : 0;
     const distance = scoped ? 4 : CAMERA_DISTANCE + rideBoost * 1.3;
     const height = scoped ? 3 : CAMERA_HEIGHT + rideBoost * 0.9;
+    const back = Math.cos(g.camPitch) * distance;
+    const lift = Math.sin(g.camPitch) * distance * 0.35;
     const desired = new THREE.Vector3(
-      target.x - Math.sin(g.camYaw) * distance,
-      target.y + height,
-      target.z - Math.cos(g.camYaw) * distance
+      lookAt.x - Math.sin(g.camYaw) * back,
+      lookAt.y + height - lift,
+      lookAt.z - Math.cos(g.camYaw) * back
     );
     const minY = Math.max(BBMapGen.terrainHeight(map, desired.x, desired.z), self.group.position.y) + 1;
     desired.y = Math.max(desired.y, minY);
@@ -2805,21 +2833,25 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       camera.position.y += (Math.random() - 0.5) * g.shake;
       g.shake = Math.max(0, g.shake - dt * 1.5);
     }
-    camera.lookAt(target);
+    camera.lookAt(lookAt);
     const fov = scoped ? scopeFov : 60;
     if (camera.fov !== fov) {
       camera.fov = fov;
       camera.updateProjectionMatrix();
     }
-    sun.position.set(target.x + 60, target.y + 120, target.z + 40);
-    sun.target.position.copy(target);
+    sun.position.set(lookAt.x + 60, lookAt.y + 120, lookAt.z + 40);
+    sun.target.position.copy(lookAt);
 
-    const aim = cursorGroundPoint();
-    const dx = aim.x - self.group.position.x;
-    const dz = aim.z - self.group.position.z;
-    if (Math.hypot(dx, dz) > 0.6) g.aimYaw = Math.atan2(dx, dz);
-    const flat = Math.max(0.5, Math.hypot(dx, dz));
-    g.aimPitch = Math.atan2(aim.y + 1 - (self.group.position.y + 1.3), flat);
+    const aim = cursorAimPoint();
+    g.aimYaw = g.camYaw;
+    g.aimPitch = Math.max(CAM_PITCH_MIN, Math.min(CAM_PITCH_MAX, g.camPitch));
+    if (g.camPitch <= 0.05 && g.mouse.y <= 0.2) {
+      const dx = aim.x - self.group.position.x;
+      const dz = aim.z - self.group.position.z;
+      if (Math.hypot(dx, dz) > 0.6) g.aimYaw = Math.atan2(dx, dz);
+      const flat = Math.max(0.5, Math.hypot(dx, dz));
+      g.aimPitch = Math.atan2(aim.y + 1 - (self.group.position.y + 1.3), flat);
+    }
     const crosshair = hud("crosshair");
     const projected = aim.clone().project(camera);
     crosshair.style.left = `${(projected.x * 0.5 + 0.5) * 100}%`;
