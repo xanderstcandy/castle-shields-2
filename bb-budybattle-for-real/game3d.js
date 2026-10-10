@@ -22,16 +22,16 @@ const MOUSE_TURN_SPEED = 0.85;
 const CAM_PITCH_MIN = 0;
 const CAM_PITCH_MAX = Math.PI / 2 - 0.12;
 const CAM_PITCH_DOWN_MAX = 0.07;
-const MOUSE_PITCH_DEADZONE = 0.12;
+const MOUSE_PITCH_DEADZONE = 0.02;
 const MOUSE_PITCH_DOWN_DEADZONE = 0.78;
-const VIEW_PITCH_SMOOTH = 3.4;
+const VIEW_PITCH_SMOOTH = 8;
 const VIEW_PITCH_DOWN_SMOOTH = 1.15;
 const RIGHT_DRAG_YAW = 0.0032;
 
 function mousePitchGoal(mouseY) {
   if (mouseY > MOUSE_PITCH_DEADZONE) {
     const amount = (mouseY - MOUSE_PITCH_DEADZONE) / (1 - MOUSE_PITCH_DEADZONE);
-    return amount * CAM_PITCH_MAX;
+    return Math.sqrt(amount) * CAM_PITCH_MAX;
   }
   if (mouseY < -MOUSE_PITCH_DOWN_DEADZONE) {
     const amount = (-mouseY - MOUSE_PITCH_DOWN_DEADZONE) / (1 - MOUSE_PITCH_DOWN_DEADZONE);
@@ -2914,7 +2914,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
         g.shake = Math.max(0, g.shake - dt * 1.5);
       }
       const pitchGoal = mousePitchGoal(g.mouse.y);
-      const pitchSmooth = pitchGoal < g.viewPitch ? VIEW_PITCH_DOWN_SMOOTH : VIEW_PITCH_SMOOTH;
+      const pitchSmooth = pitchGoal < 0 && pitchGoal < g.viewPitch ? VIEW_PITCH_DOWN_SMOOTH : VIEW_PITCH_SMOOTH;
       g.viewPitch += (pitchGoal - g.viewPitch) * Math.min(1, dt * pitchSmooth);
       const look = orbit.clone();
       look.x += Math.sin(g.camYaw) * 7;
