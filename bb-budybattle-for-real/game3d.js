@@ -181,6 +181,49 @@ const ZOMBIE_LOOK = {
   shoe: 0x1f1f1f
 };
 
+const ROBOT_BODY_COLORS = [0xb6bec9, 0x8b94a1, 0x6b7280];
+const ROBOT_SCALE = 1.15;
+
+function buildRobotParts() {
+  const parts = new THREE.Group();
+  const steel = new THREE.MeshPhongMaterial({ color: 0x9ca3af, shininess: 90, specular: 0xdde4ec });
+  const glow = new THREE.MeshBasicMaterial({ color: 0x67e8f9 });
+  const add = (geometry, material, x, y, z) => {
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.set(x, y, z);
+    mesh.castShadow = true;
+    parts.add(mesh);
+    return mesh;
+  };
+  add(new THREE.BoxGeometry(0.4, 0.1, 0.03), glow, 0, 1.8, 0.235);
+  add(new THREE.CylinderGeometry(0.025, 0.025, 0.3, 8), steel, 0, 2.15, 0);
+  add(new THREE.SphereGeometry(0.06, 10, 8), glow, 0, 2.32, 0);
+  add(new THREE.BoxGeometry(0.26, 0.2, 0.03), glow, 0, 1.24, 0.18);
+  [-0.42, 0.42].forEach((x) => add(new THREE.BoxGeometry(0.26, 0.12, 0.26), steel, x, 1.52, 0));
+  return parts;
+}
+
+function setRobotLook(buddy, on) {
+  if (Boolean(buddy.robotParts) === on) return;
+  buddy.materials.forEach((material, index) => {
+    if (material.userData.baseColor === undefined) material.userData.baseColor = material.color.getHex();
+    material.color.setHex(on ? ROBOT_BODY_COLORS[index % ROBOT_BODY_COLORS.length] : material.userData.baseColor);
+  });
+  if (on) {
+    buddy.robotParts = buildRobotParts();
+    buddy.group.add(buddy.robotParts);
+  } else {
+    buddy.group.remove(buddy.robotParts);
+    buddy.robotParts.traverse((child) => {
+      if (!child.isMesh) return;
+      child.geometry.dispose();
+      child.material.dispose();
+    });
+    buddy.robotParts = null;
+  }
+  buddy.group.scale.setScalar(on ? ROBOT_SCALE : 1);
+}
+
 function buildBuddy(avatar, skinId, zombie = false) {
   const base = AVATAR_LOOKS[avatar] || AVATAR_LOOKS["boy-1"];
   const look = zombie ? { ...base, ...ZOMBIE_LOOK } : base;
@@ -1504,7 +1547,7 @@ function renderHudShell(root) {
     <div class="mh-toast" data-hud-toast></div>
     <div class="mh-prompt" data-hud-prompt></div>
     <div class="mh-hotbar" data-hud-hotbar></div>
-    <div class="mh-help">WASD / arrows move · mouse aims · click attack · Space jump · 1-8 switch gear · scroll zoom · Enter door / pick up · Backspace drop · Shift sprint · Q shop · E build · F switch block/vehicle · R ride B.B.s / get in vehicles · right-drag turn camera · Z scope</div>
+    <div class="mh-help">WASD / arrows move · mouse aims · click attack · Space jump · 1-8 switch gear · scroll zoom · Enter door / pick up · Backspace drop · Shift sprint · Q shop · E build · F switch block/vehicle · R ride B.B.s / get in vehicles · T robot (1000 metal + 5 ⚡) · right-drag turn camera · Z scope</div>
     </div>
     <div class="mh-shop" data-hud-shop hidden></div>
   `);
@@ -1561,7 +1604,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
   tutorialEl.hidden = true;
   tutorialEl.innerHTML = `
     <p class="mh-tutorial-title">First drop — controls</p>
-    <p class="mh-tutorial-body"><strong>Move</strong> WASD or arrow keys · <strong>Aim</strong> mouse · <strong>Attack</strong> click · <strong>Jump</strong> Space · <strong>Switch gear</strong> 1–8 · <strong>Zoom</strong> scroll wheel · <strong>Doors / pick up</strong> Enter · <strong>Drop item</strong> Backspace · <strong>Shop</strong> Q · <strong>Build</strong> E (F swaps wood/metal — smash trees, cars, lights and furniture for materials) · <strong>Ride big B.B.s</strong> R · <strong>Turn camera</strong> right-drag · <strong>Scope</strong> Z</p>
+    <p class="mh-tutorial-body"><strong>Move</strong> WASD or arrow keys · <strong>Aim</strong> mouse · <strong>Attack</strong> click · <strong>Jump</strong> Space · <strong>Switch gear</strong> 1–8 · <strong>Zoom</strong> scroll wheel · <strong>Doors / pick up</strong> Enter · <strong>Drop item</strong> Backspace · <strong>Shop</strong> Q · <strong>Build</strong> E (F swaps wood/metal — smash trees, cars, lights and furniture for materials) · <strong>Ride big B.B.s</strong> R · <strong>Robot</strong> T (1000 metal + 5 electricity from cars, trucks, tanks and stop lights) · <strong>Turn camera</strong> right-drag · <strong>Scope</strong> Z</p>
     <button class="mh-tutorial-btn" type="button" data-action="dismiss-battle-tutorial">Got it!</button>
   `;
   root.appendChild(tutorialEl);
@@ -1735,7 +1778,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     sprite.userData.lootId = entry.id;
     const ring = new THREE.Mesh(
       new THREE.RingGeometry(0.45, 0.7, 20),
-      new THREE.MeshBasicMaterial({ color: isPotionName(entry.item) ? 0xa855f7 : entry.item === "Wood" ? 0xa0703c : entry.item === "Metal" ? 0x9ca3af : 0xfacc15, transparent: true, opacity: 0.75, side: THREE.DoubleSide, depthWrite: false })
+      new THREE.MeshBasicMaterial({ color: isPotionName(entry.item) ? 0xa855f7 : entry.item === "Wood" ? 0xa0703c : entry.item === "Metal" ? 0x9ca3af : entry.item === "Electricity" ? 0x22d3ee : 0xfacc15, transparent: true, opacity: 0.75, side: THREE.DoubleSide, depthWrite: false })
     );
     ring.rotation.x = -Math.PI / 2;
     ring.position.y = 0.08;
@@ -1993,6 +2036,9 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
         } else if (BREAKABLE_POOFS[ev.kind]) {
           breakWorldThing(ev.kind, ev.id, true);
         }
+      } else if (ev.k === "robot") {
+        const entry = g.players.get(ev.id);
+        if (entry) spawnPoof(entry.group.position.x, entry.group.position.y + 1.2, entry.group.position.z, 0x67e8f9, ev.on ? 2.2 : 1.4);
       } else if (ev.k === "block+") {
         addBlock(ev);
       } else if (ev.k === "blockhit") {
@@ -2137,7 +2183,9 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     hud("hp").textContent = `${me.hp} / ${me.maxHp}`;
     hud("hp-fill").style.width = `${Math.max(0, (me.hp / me.maxHp) * 100)}%`;
     hud("stats").innerHTML = `${shopShieldSvg()} ${me.def} defense · ${shopSwordSvg()} ${me.dmg} damage`;
-    const effectText = me.effect ? `${me.effect}${me.effectMs >= 0 ? ` · ${formatMs(me.effectMs)}` : " · rest of game"}` : "";
+    const potionText = me.effect ? `${me.effect}${me.effectMs >= 0 ? ` · ${formatMs(me.effectMs)}` : " · rest of game"}` : "";
+    const robotText = me.robotMs > 0 ? `🤖 ROBOT · ${formatMs(me.robotMs)}` : "";
+    const effectText = [robotText, potionText].filter(Boolean).join(" · ");
     hud("effect").textContent = me.stunMs > 0
       ? `STUNNED ${(me.stunMs / 1000).toFixed(1)}s`
       : me.protectMs > 0 ? `Spawn protection ${formatMs(me.protectMs)}` : effectText;
@@ -2153,7 +2201,8 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     hud("kills").textContent = `${me.kills} KO`;
     hud("coins").innerHTML = `${shopCoinSvg()} ${me.coins}`;
     const veh = me.veh;
-    const matsKey = `${me.wood}|${me.metal}|${g.buildMat}|${veh ? veh.join(",") : ""}`;
+    const robotReady = !me.robotMs && me.metal >= ROBOT_FORM.metal && me.electricity >= ROBOT_FORM.electricity;
+    const matsKey = `${me.wood}|${me.metal}|${me.electricity}|${robotReady}|${g.buildMat}|${veh ? veh.join(",") : ""}`;
     if (matsKey !== g.matsKey) {
       g.matsKey = matsKey;
       const chip = (mat, label, count) => `<span class="mh-mat${g.buildMat === mat ? " mh-mat--active" : ""}">${label} ${count}</span>`;
@@ -2162,7 +2211,8 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       const insideChip = veh
         ? ` <span class="mh-mat mh-mat--vehicle">${VEHICLES[veh[0]].label} ${veh[1]}/${veh[2]} HP${veh[3] === 0 ? " · driving" : ""}${veh[4] >= 0 ? (veh[4] > 0 ? " · reloading" : " · gun ready") : ""}</span>`
         : "";
-      hud("mats").innerHTML = `${chip("wood", "🪵", me.wood)} ${chip("metal", "🔩", me.metal)}${vehicleChip}${insideChip} <span class="mh-mat-hint">E build · F switch</span>`;
+      const robotChip = robotReady ? ` <span class="mh-mat mh-mat--active">🤖 T: become robot</span>` : "";
+      hud("mats").innerHTML = `${chip("wood", "🪵", me.wood)} ${chip("metal", "🔩", me.metal)} ${chip("electricity", "⚡", me.electricity || 0)}${vehicleChip}${insideChip}${robotChip} <span class="mh-mat-hint">E build · F switch</span>`;
     }
 
     const hotbarKey = JSON.stringify([me.inv, me.held]);
@@ -2365,6 +2415,10 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       sendMsg({ t: "ride" });
       return;
     }
+    if (code === "KeyT") {
+      if (!g.shopOpen) sendMsg({ t: "robot" });
+      return;
+    }
     if (code === "KeyZ") g.scope = !g.scope;
     if (["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(code)) event.preventDefault();
     g.keys.add(code);
@@ -2532,6 +2586,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       entry.mountId = row[10] || 0;
       entry.vehicleId = row[11] || 0;
       entry.seat = row[12] || 0;
+      setRobotLook(entry, Boolean(row[13]));
       const seated = entry.mountId || entry.vehicleId;
       entry.walk += seated ? 0 : speed * dt * 2.2;
       const swing = speed > 0.5 && !seated ? Math.sin(entry.walk) * 0.7 : 0;

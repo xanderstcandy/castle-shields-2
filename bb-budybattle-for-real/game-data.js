@@ -432,7 +432,9 @@ function buildBlockDimensions(spec) {
     h: BLOCK_HEIGHT * BUILD_BLOCK_SMALL_SCALE
   };
 }
-const RESOURCE_ITEMS = ["Wood", "Metal"];
+const RESOURCE_ITEMS = ["Wood", "Metal", "Electricity"];
+const ELECTRICITY_DROP_CHANCE = 0.15;
+const ROBOT_FORM = { metal: 1000, electricity: 5, hp: 400, damage: 10, defense: 3, durationMs: 5 * 60 * 1000 };
 
 const VEHICLES = {
   car: { label: "Car", cost: 15, hp: 75, speed: 2, seats: 1, drop: 15, radius: 1.1 },
@@ -618,6 +620,8 @@ if (typeof module !== "undefined") {
     BLOCK_HEIGHT,
     buildBlockDimensions,
     RESOURCE_ITEMS,
+    ELECTRICITY_DROP_CHANCE,
+    ROBOT_FORM,
     isResourceName
   };
 }

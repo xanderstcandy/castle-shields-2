@@ -1038,6 +1038,12 @@ export function buildResourceModel(name) {
       kit.wheel(0.1, 0.01, "lightWood", x, y, 0.325, 12).rotation.set(Math.PI / 2, 0, 0);
       kit.wheel(0.1, 0.01, "lightWood", x, y, -0.325, 12).rotation.set(Math.PI / 2, 0, 0);
     });
+  } else if (name === "Electricity") {
+    kit.post(0.13, 0.13, -0.22, 0.44, "gunmetal", 0, 0, 16);
+    kit.post(0.135, 0.135, 0.05, 0.12, "glow:yellow", 0, 0, 16);
+    kit.post(0.05, 0.05, 0.22, 0.06, "steel", 0, 0, 10);
+    kit.box(0.05, 0.16, 0.02, "glow:yellow", 0.02, -0.08, 0.13, 0, 0, 0.5);
+    kit.box(0.05, 0.16, 0.02, "glow:yellow", -0.02, 0.02, 0.13, 0, 0, 0.5);
   } else {
     [[-0.13, 0, 0], [0.13, 0, 0], [0, 0.13, Math.PI / 2]].forEach(([x, y, ry]) => {
       kit.box(0.22, 0.12, 0.5, "darkSteel", x, y, 0, 0, ry, 0);

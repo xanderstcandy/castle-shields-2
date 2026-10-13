@@ -309,6 +309,8 @@ class Match {
       coins: 0,
       wood: 0,
       metal: 0,
+      electricity: 0,
+      robotUntil: 0,
       lastBuildAt: -99999,
       sprintActiveUntil: 0,
       sprintCooldownUntil: 0,
@@ -668,7 +670,7 @@ class Match {
     });
     this.vehicles = this.vehicles.filter((entry) => entry !== v);
     this.events.push({ k: "vboom", id: v.id, x: round2(v.x), y: round2(v.y), z: round2(v.z) });
-    this.dropResources(v.x, v.z, v.y, { metal: data.VEHICLES[v.kind].drop });
+    this.dropResources(v.x, v.z, v.y, this.withElectricity({ metal: data.VEHICLES[v.kind].drop }));
     if (sourcePlayer && sourcePlayer.ws) send(sourcePlayer.ws, { t: "notice", text: `Destroyed a ${data.VEHICLES[v.kind].label}!` });
   }
 
@@ -763,11 +765,11 @@ class Match {
     smash(this.doors, "door", range, () => WORLD_DROPS.door, (door) => Math.abs(door.y - p.y) <= 2.5);
     this.doors.forEach((door) => { if (door.broken) door.open = true; });
     smash(this.props, "prop", range, (prop) => PROP_DROPS[prop.type] || { wood: 1 }, (prop) => Math.abs(prop.y - p.y) <= 2.5);
-    smash(this.stoplights, "light", range + 0.5, () => WORLD_DROPS.light);
+    smash(this.stoplights, "light", range + 0.5, () => this.withElectricity(WORLD_DROPS.light));
     smash(this.map.trees, "tree", range + 0.7, () => WORLD_DROPS.tree);
     smash(this.map.rocks, "rock", range + 1.2, () => WORLD_DROPS.rock);
     smash(this.map.lamps, "lamp", range + 0.3, () => WORLD_DROPS.lamp);
-    smash(this.map.cars, "car", range + 1.8, () => WORLD_DROPS.car);
+    smash(this.map.cars, "car", range + 1.8, () => this.withElectricity(WORLD_DROPS.car));
     this.map.carBlocks.forEach((block) => { if (this.map.cars[block.car].broken) block.broken = true; });
     [...this.map.blocks].forEach((block) => {
       if (block.y > p.y + 2.4 || block.y + block.h < p.y - 0.6) return;
@@ -786,12 +788,17 @@ class Match {
     car.broken = true;
     this.map.carBlocks.forEach((block) => { if (block.car === car.id) block.broken = true; });
     this.events.push({ k: "break", kind: "car", id: car.id });
-    this.dropResources(car.x, car.z, car.y, WORLD_DROPS.car);
+    this.dropResources(car.x, car.z, car.y, this.withElectricity(WORLD_DROPS.car));
+  }
+
+  withElectricity(drops) {
+    return this.rand() < data.ELECTRICITY_DROP_CHANCE ? { ...drops, electricity: 1 } : drops;
   }
 
   dropResources(x, z, y, drops) {
     if (drops.wood) this.dropLoot(x, z, "Wood", y, drops.wood);
     if (drops.metal) this.dropLoot(x, z, "Metal", y, drops.metal);
+    if (drops.electricity) this.dropLoot(x, z, "Electricity", y, drops.electricity);
   }
 
   blockPayload(block) {
@@ -898,6 +905,7 @@ class Match {
 
   collectResource(p, entry) {
     if (entry.item === "Wood") p.wood += entry.amount || 1;
+    else if (entry.item === "Electricity") p.electricity += entry.amount || 1;
     else p.metal += entry.amount || 1;
     this.loot.delete(entry.id);
     this.events.push({ k: "loot-", id: entry.id });
@@ -923,6 +931,7 @@ class Match {
   playerDefense(p) {
     let defense = p.inv.reduce((sum, item) => sum + (item ? data.getWeaponDefense(item) : 0), 0);
     if (p.effect && p.effect.defense) defense += p.effect.defense;
+    if (p.robotUntil) defense += data.ROBOT_FORM.defense;
     return defense;
   }
 
@@ -933,7 +942,33 @@ class Match {
   attackDamage(p) {
     const item = this.heldItem(p);
     const base = item && !data.isPotionName(item) ? data.getWeaponDamage(item) : 0;
-    return base + (p.effect && p.effect.damage ? p.effect.damage : 0);
+    return base + (p.effect && p.effect.damage ? p.effect.damage : 0) + (p.robotUntil ? data.ROBOT_FORM.damage : 0);
+  }
+
+  becomeRobot(p) {
+    const spec = data.ROBOT_FORM;
+    const notice = (text) => send(p.ws, { t: "notice", text });
+    if (p.zombie) return;
+    if (p.robotUntil) return notice("You're already a robot");
+    if (p.metal < spec.metal || p.electricity < spec.electricity) {
+      return notice(`Need ${spec.metal} metal and ${spec.electricity} electricity to become a robot (you have ${p.metal} metal, ${p.electricity} electricity)`);
+    }
+    p.metal -= spec.metal;
+    p.electricity -= spec.electricity;
+    p.robotUntil = this.elapsed() + spec.durationMs;
+    p.maxHp += spec.hp;
+    p.hp += spec.hp;
+    this.events.push({ k: "robot", id: p.id, on: 1 });
+    notice(`ROBOT MODE! +${spec.hp} HP, +${spec.damage} damage, +${spec.defense} defense for 5 minutes`);
+  }
+
+  endRobot(p) {
+    if (!p.robotUntil) return;
+    p.robotUntil = 0;
+    p.maxHp -= data.ROBOT_FORM.hp;
+    p.hp = Math.max(1, Math.min(p.hp, p.maxHp));
+    this.events.push({ k: "robot", id: p.id, on: 0 });
+    send(p.ws, { t: "notice", text: "Your robot suit powered down" });
   }
 
   hasFireResist(p) {
@@ -1039,9 +1074,11 @@ class Match {
     p.place = place;
     p.inv.forEach((item) => { if (item) this.dropLoot(p.x, p.z, item, p.y); });
     p.inv = p.inv.map(() => null);
-    this.dropResources(p.x, p.z, p.y, { wood: p.wood, metal: p.metal });
+    this.dropResources(p.x, p.z, p.y, { wood: p.wood, metal: p.metal, electricity: p.electricity });
     p.wood = 0;
     p.metal = 0;
+    p.electricity = 0;
+    p.robotUntil = 0;
     this.bbs.forEach((bb) => {
       if (bb.owner === p.id && bb.alive) {
         bb.alive = false;
@@ -1184,6 +1221,8 @@ class Match {
       this.dropHeld(p);
     } else if (msg.t === "build") {
       this.build(p, String(msg.mat || ""));
+    } else if (msg.t === "robot") {
+      this.becomeRobot(p);
     }
   }
 
@@ -1589,6 +1628,7 @@ class Match {
         else this.damagePlayer(p, p.poison.dps * dt, this.playerById(p.poison.source), { ignoreDefense: true, cause: "Poison" });
       }
       if (p.effect && now > p.effect.until) p.effect = null;
+      if (p.robotUntil && now > p.robotUntil) this.endRobot(p);
     });
     this.bbs.forEach((bb) => {
       if (!bb.alive) return;
@@ -1942,7 +1982,8 @@ class Match {
     const now = this.elapsed();
     const players = this.players.filter((p) => p.alive).map((p) => [
       p.id, round2(p.x), round2(p.y), round2(p.z), round2(p.yaw), Math.ceil(p.hp), p.maxHp,
-      this.heldItem(p) || "", now < p.stunUntil ? 1 : 0, now < p.swingUntil ? 1 : 0, p.riding || 0, p.vehicle || 0, p.seat || 0
+      this.heldItem(p) || "", now < p.stunUntil ? 1 : 0, now < p.swingUntil ? 1 : 0, p.riding || 0, p.vehicle || 0, p.seat || 0,
+      p.robotUntil ? 1 : 0
     ]);
     const vehicles = this.vehicles.map((v) => [
       v.id, data.VEHICLE_KINDS.indexOf(v.kind), round2(v.x), round2(v.y), round2(v.z), round2(v.yaw), Math.ceil(v.hp), v.maxHp, round2(v.aim),
@@ -1977,6 +2018,8 @@ class Match {
           coins: p.coins,
           wood: p.wood,
           metal: p.metal,
+          electricity: p.electricity,
+          robotMs: p.robotUntil ? Math.max(0, p.robotUntil - now) : 0,
           hp: Math.ceil(p.hp),
           maxHp: p.maxHp,
           def: round2(this.playerDefense(p)),
