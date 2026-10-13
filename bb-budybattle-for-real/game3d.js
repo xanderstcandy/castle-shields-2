@@ -1615,7 +1615,7 @@ function renderHudShell(root) {
     <div class="mh-toast" data-hud-toast></div>
     <div class="mh-prompt" data-hud-prompt></div>
     <div class="mh-hotbar" data-hud-hotbar></div>
-    <div class="mh-help">WASD / arrows move · mouse aims · click attack · Space jump · 1-8 switch gear · scroll zoom · Enter door / pick up · Backspace drop · Shift sprint · Q shop · E build · F switch block/vehicle · R ride B.B.s / get in vehicles · F to Robot then E builds you into a robot (1000 metal + 5 ⚡) · right-drag turn camera · Z scope</div>
+    <div class="mh-help">WASD / arrows move · mouse aims · click attack · Space jump · 1-8 switch gear · scroll zoom · Enter door / pick up · Backspace drop · Shift sprint · Q shop · E build · F switch block/vehicle · R ride B.B.s / get in vehicles · F to Robot then E builds you into a robot (costs 1000 metal and 5 ⚡) · right-drag turn camera · Z scope</div>
     </div>
     <div class="mh-shop" data-hud-shop hidden></div>
   `);
@@ -1672,7 +1672,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
   tutorialEl.hidden = true;
   tutorialEl.innerHTML = `
     <p class="mh-tutorial-title">First drop — controls</p>
-    <p class="mh-tutorial-body"><strong>Move</strong> WASD or arrow keys · <strong>Aim</strong> mouse · <strong>Attack</strong> click · <strong>Jump</strong> Space · <strong>Switch gear</strong> 1–8 · <strong>Zoom</strong> scroll wheel · <strong>Doors / pick up</strong> Enter · <strong>Drop item</strong> Backspace · <strong>Shop</strong> Q · <strong>Build</strong> E (F swaps wood/metal — smash trees, cars, lights and furniture for materials) · <strong>Ride big B.B.s</strong> R · <strong>Robot</strong> F to Robot, then E (1000 metal + 5 electricity from cars, trucks, tanks and stop lights) · <strong>Turn camera</strong> right-drag · <strong>Scope</strong> Z</p>
+    <p class="mh-tutorial-body"><strong>Move</strong> WASD or arrow keys · <strong>Aim</strong> mouse · <strong>Attack</strong> click · <strong>Jump</strong> Space · <strong>Switch gear</strong> 1–8 · <strong>Zoom</strong> scroll wheel · <strong>Doors / pick up</strong> Enter · <strong>Drop item</strong> Backspace · <strong>Shop</strong> Q · <strong>Build</strong> E (F swaps wood/metal — smash trees, cars, lights and furniture for materials) · <strong>Ride big B.B.s</strong> R · <strong>Robot</strong> F to Robot, then E (costs 1000 metal and 5 electricity; electricity sometimes drops from broken cars, trucks, tanks and stop lights) · <strong>Turn camera</strong> right-drag · <strong>Scope</strong> Z</p>
     <button class="mh-tutorial-btn" type="button" data-action="dismiss-battle-tutorial">Got it!</button>
   `;
   root.appendChild(tutorialEl);
@@ -2042,8 +2042,13 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
 
   function applyEvents(events) {
     events.forEach((ev) => {
-      if (ev.k === "loot+") addLoot(ev);
-      else if (ev.k === "loot-") removeLoot(ev.id);
+      if (ev.k === "loot+") {
+        addLoot(ev);
+        const self = g.players.get(g.myId);
+        if (ev.item === "Electricity" && self && Math.hypot(ev.x - self.group.position.x, ev.z - self.group.position.z) < 15) {
+          toast("⚡ Electricity dropped! Walk over it to grab it", 2400);
+        }
+      } else if (ev.k === "loot-") removeLoot(ev.id);
       else if (ev.k === "chest") openChest(ev.id, ev.rare);
       else if (ev.k === "kill") {
         const victim = nameOf(ev.b);
@@ -2280,7 +2285,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
         ? ` <span class="mh-mat mh-mat--vehicle">${VEHICLES[veh[0]].label} ${veh[1]}/${veh[2]} HP${veh[3] === 0 ? " · driving" : ""}${veh[4] >= 0 ? (veh[4] > 0 ? " · reloading" : " · gun ready") : ""}</span>`
         : "";
       const robotChip = g.buildMat === "robot"
-        ? ` <span class="mh-mat mh-mat--active">🤖 Robot (${ROBOT_FORM.metal} 🔩 + ${ROBOT_FORM.electricity} ⚡)${robotReady ? " · E to build" : ""}</span>`
+        ? ` <span class="mh-mat mh-mat--active">🤖 Robot · costs ${ROBOT_FORM.metal} 🔩 ${ROBOT_FORM.electricity} ⚡${robotReady ? " · E to build" : ""}</span>`
         : robotReady ? ` <span class="mh-mat">🤖 Robot ready</span>` : "";
       hud("mats").innerHTML = `${chip("wood", "🪵", me.wood)} ${chip("metal", "🔩", me.metal)} ${chip("electricity", "⚡", me.electricity || 0)}${vehicleChip}${insideChip}${robotChip} <span class="mh-mat-hint">E build · F switch</span>`;
     }
@@ -2453,7 +2458,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       g.buildMat = BUILD_OPTIONS[(BUILD_OPTIONS.indexOf(g.buildMat) + 1) % BUILD_OPTIONS.length];
       const vehicle = VEHICLES[g.buildMat];
       if (g.buildMat === "robot") {
-        toast(`Build yourself into a robot: ${ROBOT_FORM.metal} metal + ${ROBOT_FORM.electricity} electricity · +${ROBOT_FORM.hp} HP · +${ROBOT_FORM.damage} damage · +${ROBOT_FORM.defense} defense for 5 min`, 2200);
+        toast(`Build yourself into a robot · costs ${ROBOT_FORM.metal} metal and ${ROBOT_FORM.electricity} electricity · gives +${ROBOT_FORM.hp} HP, +${ROBOT_FORM.damage} damage, +${ROBOT_FORM.defense} defense for 5 min`, 2600);
       } else if (vehicle) {
         toast(`Building a ${vehicle.label}: ${vehicle.cost} metal · ${vehicle.hp} HP · ${vehicle.seats} seat${vehicle.seats > 1 ? "s" : ""} · ${vehicle.speed}× speed${vehicle.gun ? ` · ${vehicle.gun.damage} dmg gun` : ""}`, 1800);
       } else {
