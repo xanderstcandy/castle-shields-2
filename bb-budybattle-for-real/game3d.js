@@ -181,45 +181,113 @@ const ZOMBIE_LOOK = {
   shoe: 0x1f1f1f
 };
 
-const ROBOT_BODY_COLORS = [0xb6bec9, 0x8b94a1, 0x6b7280];
 const ROBOT_SCALE = 1.15;
 
-function buildRobotParts() {
-  const parts = new THREE.Group();
-  const steel = new THREE.MeshPhongMaterial({ color: 0x9ca3af, shininess: 90, specular: 0xdde4ec });
-  const glow = new THREE.MeshBasicMaterial({ color: 0x67e8f9 });
-  const add = (geometry, material, x, y, z) => {
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.position.set(x, y, z);
-    mesh.castShadow = true;
-    parts.add(mesh);
-    return mesh;
+function buildRobotSuit(buddy) {
+  const phong = (color, shininess, specular) => new THREE.MeshPhongMaterial({ color, shininess, specular });
+  const m = {
+    plate: phong(0xc9d1db, 110, 0xf1f5f9),
+    dark: phong(0x475569, 70, 0x94a3b8),
+    joint: phong(0x1e293b, 40, 0x475569),
+    accent: phong(0xf59e0b, 60, 0xfde68a),
+    glow: new THREE.MeshBasicMaterial({ color: 0x67e8f9 }),
+    thrust: new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.85 })
   };
-  add(new THREE.BoxGeometry(0.4, 0.1, 0.03), glow, 0, 1.8, 0.235);
-  add(new THREE.CylinderGeometry(0.025, 0.025, 0.3, 8), steel, 0, 2.15, 0);
-  add(new THREE.SphereGeometry(0.06, 10, 8), glow, 0, 2.32, 0);
-  add(new THREE.BoxGeometry(0.26, 0.2, 0.03), glow, 0, 1.24, 0.18);
-  [-0.42, 0.42].forEach((x) => add(new THREE.BoxGeometry(0.26, 0.12, 0.26), steel, x, 1.52, 0));
-  return parts;
+  const mount = (parent) => {
+    const root = new THREE.Group();
+    parent.add(root);
+    const put = (geometry, material, x, y, z, rx = 0, ry = 0, rz = 0) => {
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.position.set(x, y, z);
+      mesh.rotation.set(rx, ry, rz);
+      mesh.castShadow = true;
+      root.add(mesh);
+      return mesh;
+    };
+    return {
+      root,
+      box: (w, h, d, mat, x, y, z, rx, ry, rz) => put(new THREE.BoxGeometry(w, h, d), mat, x, y, z, rx, ry, rz),
+      cyl: (r, h, mat, x, y, z, rx, ry, rz, seg = 14) => put(new THREE.CylinderGeometry(r, r, h, seg), mat, x, y, z, rx, ry, rz),
+      ball: (r, mat, x, y, z) => put(new THREE.SphereGeometry(r, 14, 10), mat, x, y, z),
+      ring: (r, t, mat, x, y, z, rx, ry, rz) => put(new THREE.TorusGeometry(r, t, 8, 22), mat, x, y, z, rx, ry, rz)
+    };
+  };
+
+  const body = mount(buddy.group);
+  body.box(0.68, 0.5, 0.4, m.plate, 0, 1.3, 0);
+  body.box(0.52, 0.3, 0.05, m.plate, 0, 1.33, 0.215);
+  [-0.19, 0.19].forEach((x) => body.box(0.04, 0.3, 0.02, m.accent, x, 1.33, 0.243));
+  body.ring(0.1, 0.022, m.dark, 0, 1.3, 0.245);
+  body.cyl(0.075, 0.03, m.glow, 0, 1.3, 0.245, Math.PI / 2);
+  [-0.26, 0.26].forEach((x) => [1.42, 1.36, 1.3].forEach((y) => body.box(0.08, 0.018, 0.02, m.joint, x, y, 0.205)));
+  body.box(0.5, 0.24, 0.34, m.dark, 0, 0.98, 0);
+  [1.04, 0.98, 0.92].forEach((y) => body.box(0.42, 0.022, 0.02, m.joint, 0, y, 0.172));
+  body.box(0.62, 0.1, 0.38, m.joint, 0, 0.84, 0);
+  body.box(0.14, 0.08, 0.03, m.accent, 0, 0.84, 0.192);
+  body.cyl(0.11, 0.12, m.joint, 0, 1.6, 0);
+  body.box(0.46, 0.48, 0.18, m.dark, 0, 1.24, -0.28);
+  body.box(0.36, 0.06, 0.02, m.glow, 0, 1.4, -0.372);
+  [-0.13, 0.13].forEach((x) => {
+    body.cyl(0.075, 0.2, m.joint, x, 0.96, -0.3);
+    body.cyl(0.055, 0.03, m.thrust, x, 0.85, -0.3);
+  });
+
+  const head = mount(buddy.group);
+  head.box(0.58, 0.52, 0.54, m.plate, 0, 1.84, 0);
+  head.box(0.09, 0.07, 0.56, m.accent, 0, 2.12, 0);
+  head.box(0.52, 0.2, 0.025, m.joint, 0, 1.87, 0.274);
+  head.box(0.46, 0.1, 0.03, m.glow, 0, 1.88, 0.284);
+  head.box(0.34, 0.13, 0.03, m.dark, 0, 1.68, 0.276);
+  [1.71, 1.68, 1.65].forEach((y) => head.box(0.28, 0.016, 0.02, m.joint, 0, y, 0.294));
+  [-1, 1].forEach((side) => {
+    head.cyl(0.08, 0.06, m.dark, side * 0.31, 1.85, 0, 0, 0, Math.PI / 2);
+    head.cyl(0.035, 0.02, m.glow, side * 0.345, 1.85, 0, 0, 0, Math.PI / 2);
+  });
+  head.cyl(0.018, 0.32, m.joint, 0.19, 2.24, -0.1, 0, 0, 0, 8);
+  head.ball(0.045, m.glow, 0.19, 2.41, -0.1);
+
+  const limbs = buddy.arms.map((pivot) => {
+    const side = Math.sign(pivot.position.x) || 1;
+    const arm = mount(pivot);
+    arm.box(0.34, 0.2, 0.34, m.plate, side * 0.03, 0.02, 0);
+    arm.box(0.35, 0.05, 0.1, m.accent, side * 0.03, 0.13, 0);
+    arm.cyl(0.095, 0.26, m.joint, 0, -0.2, 0);
+    arm.ball(0.105, m.dark, 0, -0.36, 0);
+    arm.box(0.25, 0.3, 0.27, m.plate, 0, -0.52, 0);
+    arm.box(0.02, 0.2, 0.08, m.glow, side * 0.13, -0.52, 0);
+    arm.box(0.21, 0.16, 0.23, m.dark, 0, -0.72, 0.01);
+    return arm.root;
+  });
+  buddy.legs.forEach((pivot) => {
+    const leg = mount(pivot);
+    leg.ball(0.115, m.joint, 0, -0.02, 0);
+    leg.box(0.27, 0.34, 0.29, m.plate, 0, -0.2, 0);
+    leg.cyl(0.09, 0.28, m.dark, 0, -0.42, 0, 0, 0, Math.PI / 2);
+    leg.box(0.2, 0.14, 0.06, m.accent, 0, -0.42, 0.16);
+    leg.box(0.27, 0.32, 0.29, m.plate, 0, -0.6, 0);
+    leg.box(0.06, 0.18, 0.02, m.glow, 0, -0.6, 0.152);
+    leg.box(0.31, 0.14, 0.42, m.dark, 0, -0.77, 0.05);
+    leg.box(0.31, 0.08, 0.08, m.plate, 0, -0.79, 0.27);
+    limbs.push(leg.root);
+  });
+  return { roots: [body.root, head.root, ...limbs], materials: Object.values(m) };
 }
 
 function setRobotLook(buddy, on) {
-  if (Boolean(buddy.robotParts) === on) return;
-  buddy.materials.forEach((material, index) => {
-    if (material.userData.baseColor === undefined) material.userData.baseColor = material.color.getHex();
-    material.color.setHex(on ? ROBOT_BODY_COLORS[index % ROBOT_BODY_COLORS.length] : material.userData.baseColor);
+  if (Boolean(buddy.robotSuit) === on) return;
+  const bodyMaterials = new Set(buddy.materials);
+  buddy.group.traverse((child) => {
+    if (child.isMesh && bodyMaterials.has(child.material)) child.visible = !on;
   });
   if (on) {
-    buddy.robotParts = buildRobotParts();
-    buddy.group.add(buddy.robotParts);
+    buddy.robotSuit = buildRobotSuit(buddy);
   } else {
-    buddy.group.remove(buddy.robotParts);
-    buddy.robotParts.traverse((child) => {
-      if (!child.isMesh) return;
-      child.geometry.dispose();
-      child.material.dispose();
+    buddy.robotSuit.roots.forEach((root) => {
+      root.traverse((child) => { if (child.isMesh) child.geometry.dispose(); });
+      root.parent.remove(root);
     });
-    buddy.robotParts = null;
+    buddy.robotSuit.materials.forEach((material) => material.dispose());
+    buddy.robotSuit = null;
   }
   buddy.group.scale.setScalar(on ? ROBOT_SCALE : 1);
 }
@@ -1547,7 +1615,7 @@ function renderHudShell(root) {
     <div class="mh-toast" data-hud-toast></div>
     <div class="mh-prompt" data-hud-prompt></div>
     <div class="mh-hotbar" data-hud-hotbar></div>
-    <div class="mh-help">WASD / arrows move · mouse aims · click attack · Space jump · 1-8 switch gear · scroll zoom · Enter door / pick up · Backspace drop · Shift sprint · Q shop · E build · F switch block/vehicle · R ride B.B.s / get in vehicles · T robot (1000 metal + 5 ⚡) · right-drag turn camera · Z scope</div>
+    <div class="mh-help">WASD / arrows move · mouse aims · click attack · Space jump · 1-8 switch gear · scroll zoom · Enter door / pick up · Backspace drop · Shift sprint · Q shop · E build · F switch block/vehicle · R ride B.B.s / get in vehicles · F to Robot then E builds you into a robot (1000 metal + 5 ⚡) · right-drag turn camera · Z scope</div>
     </div>
     <div class="mh-shop" data-hud-shop hidden></div>
   `);
@@ -1604,7 +1672,7 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
   tutorialEl.hidden = true;
   tutorialEl.innerHTML = `
     <p class="mh-tutorial-title">First drop — controls</p>
-    <p class="mh-tutorial-body"><strong>Move</strong> WASD or arrow keys · <strong>Aim</strong> mouse · <strong>Attack</strong> click · <strong>Jump</strong> Space · <strong>Switch gear</strong> 1–8 · <strong>Zoom</strong> scroll wheel · <strong>Doors / pick up</strong> Enter · <strong>Drop item</strong> Backspace · <strong>Shop</strong> Q · <strong>Build</strong> E (F swaps wood/metal — smash trees, cars, lights and furniture for materials) · <strong>Ride big B.B.s</strong> R · <strong>Robot</strong> T (1000 metal + 5 electricity from cars, trucks, tanks and stop lights) · <strong>Turn camera</strong> right-drag · <strong>Scope</strong> Z</p>
+    <p class="mh-tutorial-body"><strong>Move</strong> WASD or arrow keys · <strong>Aim</strong> mouse · <strong>Attack</strong> click · <strong>Jump</strong> Space · <strong>Switch gear</strong> 1–8 · <strong>Zoom</strong> scroll wheel · <strong>Doors / pick up</strong> Enter · <strong>Drop item</strong> Backspace · <strong>Shop</strong> Q · <strong>Build</strong> E (F swaps wood/metal — smash trees, cars, lights and furniture for materials) · <strong>Ride big B.B.s</strong> R · <strong>Robot</strong> F to Robot, then E (1000 metal + 5 electricity from cars, trucks, tanks and stop lights) · <strong>Turn camera</strong> right-drag · <strong>Scope</strong> Z</p>
     <button class="mh-tutorial-btn" type="button" data-action="dismiss-battle-tutorial">Got it!</button>
   `;
   root.appendChild(tutorialEl);
@@ -2211,7 +2279,9 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
       const insideChip = veh
         ? ` <span class="mh-mat mh-mat--vehicle">${VEHICLES[veh[0]].label} ${veh[1]}/${veh[2]} HP${veh[3] === 0 ? " · driving" : ""}${veh[4] >= 0 ? (veh[4] > 0 ? " · reloading" : " · gun ready") : ""}</span>`
         : "";
-      const robotChip = robotReady ? ` <span class="mh-mat mh-mat--active">🤖 T: become robot</span>` : "";
+      const robotChip = g.buildMat === "robot"
+        ? ` <span class="mh-mat mh-mat--active">🤖 Robot (${ROBOT_FORM.metal} 🔩 + ${ROBOT_FORM.electricity} ⚡)${robotReady ? " · E to build" : ""}</span>`
+        : robotReady ? ` <span class="mh-mat">🤖 Robot ready</span>` : "";
       hud("mats").innerHTML = `${chip("wood", "🪵", me.wood)} ${chip("metal", "🔩", me.metal)} ${chip("electricity", "⚡", me.electricity || 0)}${vehicleChip}${insideChip}${robotChip} <span class="mh-mat-hint">E build · F switch</span>`;
     }
 
@@ -2382,7 +2452,9 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     if (code === "KeyF") {
       g.buildMat = BUILD_OPTIONS[(BUILD_OPTIONS.indexOf(g.buildMat) + 1) % BUILD_OPTIONS.length];
       const vehicle = VEHICLES[g.buildMat];
-      if (vehicle) {
+      if (g.buildMat === "robot") {
+        toast(`Build yourself into a robot: ${ROBOT_FORM.metal} metal + ${ROBOT_FORM.electricity} electricity · +${ROBOT_FORM.hp} HP · +${ROBOT_FORM.damage} damage · +${ROBOT_FORM.defense} defense for 5 min`, 2200);
+      } else if (vehicle) {
         toast(`Building a ${vehicle.label}: ${vehicle.cost} metal · ${vehicle.hp} HP · ${vehicle.seats} seat${vehicle.seats > 1 ? "s" : ""} · ${vehicle.speed}× speed${vehicle.gun ? ` · ${vehicle.gun.damage} dmg gun` : ""}`, 1800);
       } else {
         const spec = BUILD_BLOCKS[g.buildMat];
@@ -2413,10 +2485,6 @@ function createGame({ root, socket, start, showBattleTutorial, onBattleTutorialD
     }
     if (code === "KeyR") {
       sendMsg({ t: "ride" });
-      return;
-    }
-    if (code === "KeyT") {
-      if (!g.shopOpen) sendMsg({ t: "robot" });
       return;
     }
     if (code === "KeyZ") g.scope = !g.scope;

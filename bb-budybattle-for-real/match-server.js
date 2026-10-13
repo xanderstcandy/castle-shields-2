@@ -847,6 +847,10 @@ class Match {
 
   build(p, mat) {
     if (p.riding || p.vehicle) return;
+    if (mat === "robot") {
+      this.becomeRobot(p);
+      return;
+    }
     if (data.VEHICLES[mat]) {
       this.buildVehicle(p, mat);
       return;

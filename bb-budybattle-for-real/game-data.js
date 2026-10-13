@@ -443,7 +443,7 @@ const VEHICLES = {
   tank: { label: "Tank", cost: 75, hp: 250, speed: 1.75, seats: 5, drop: 250, radius: 1.6, gun: { damage: 30, cooldownMs: 900, speed: 90, range: 90 } }
 };
 const VEHICLE_KINDS = Object.keys(VEHICLES);
-const BUILD_OPTIONS = ["wood", "metal", ...VEHICLE_KINDS];
+const BUILD_OPTIONS = ["wood", "metal", ...VEHICLE_KINDS, "robot"];
 
 function isResourceName(name) {
   return RESOURCE_ITEMS.includes(name);
