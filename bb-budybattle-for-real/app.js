@@ -39,8 +39,11 @@ const YAW_LABELS = [
   "Front left"
 ];
 
+const LOADING_MIN_MS = 3400;
+const LOADING_STATUS_PHRASE = "Sharpening spoons, wrangling wild B.B.s, and parachuting onto the island...";
+
 const state = {
-  screen: "sign-in",
+  screen: "loading",
   username: "",
   password: "",
   avatar: "boy-1",
@@ -729,6 +732,52 @@ function template(html, className) {
   disposeGearPreview3d();
   app.className = `app ${className}`.trim();
   app.innerHTML = html;
+}
+
+function pixelSnakeLetter(headSide = "right") {
+  return Array.from({ length: 35 }, (_, index) => {
+    const col = index % 5;
+    const row = Math.floor(index / 5);
+    const isTop = row === 0;
+    const isMiddle = row === 3;
+    const isBottom = row === 6;
+    const isLeftCurve = col === 0 && row > 0 && row < 3;
+    const isRightCurve = col === 4 && row > 3 && row < 6;
+    const isHead = row === 0 && ((headSide === "right" && col === 4) || (headSide === "left" && col === 0));
+    const isMetal = isTop || isMiddle || isBottom || isLeftCurve || isRightCurve;
+    return `<span class="snake-letter-pixel ${isMetal ? "metal" : ""} ${isHead ? `head head-${headSide}` : ""}"></span>`;
+  }).join("");
+}
+
+function renderStudioIntro() {
+  template(`
+    <div class="studio-intro">
+      <div class="snake-mark" aria-hidden="true">
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
+      <p class="studio-kicker">Loading game by</p>
+      <h1 class="studio-name" aria-label="CyberSnakeStudios">
+        <span>Cyber</span><span class="snake-letter">${pixelSnakeLetter("right")}</span><span>nake</span><span class="snake-letter">${pixelSnakeLetter("right")}</span><span>tudios</span>
+      </h1>
+      <div class="pixel-metal-snake" aria-hidden="true">
+        <span class="snake-pixel tail"></span>
+        <span class="snake-pixel body low"></span>
+        <span class="snake-pixel body"></span>
+        <span class="snake-pixel body high"></span>
+        <span class="snake-pixel body"></span>
+        <span class="snake-pixel body low"></span>
+        <span class="snake-pixel body"></span>
+        <span class="snake-pixel body high"></span>
+        <span class="snake-pixel body"></span>
+        <span class="snake-pixel body low"></span>
+        <span class="snake-pixel body"></span>
+        <span class="snake-pixel head"></span>
+      </div>
+      <p class="studio-status">${escapeHtml(LOADING_STATUS_PHRASE)}</p>
+    </div>
+  `, "center studio-screen");
 }
 
 function renderScene(content, screenClass = "drop-screen") {
@@ -4207,6 +4256,10 @@ function renderLobby() {
 }
 
 function render() {
+  if (state.screen === "loading") {
+    renderStudioIntro();
+    return;
+  }
   if (state.screen === "create-account") {
     renderCreateAccount();
   } else if (state.screen === "battle") {
@@ -4759,6 +4812,11 @@ state.draft = readLastCallsign();
 state.avatar = readAvatar();
 state.avatarYaw = readAvatarYaw();
 render();
+setTimeout(() => {
+  if (state.screen !== "loading") return;
+  state.screen = "sign-in";
+  render();
+}, LOADING_MIN_MS);
 setInterval(tickLiveCount, 2200);
 window.addEventListener("bb3d-ready", () => {
   if (state.screen === "gear" || state.screen === "lobby") render();
